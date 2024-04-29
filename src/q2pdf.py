@@ -1,5 +1,7 @@
 import fitz
 import json
+import csv
+import ocr_json
 from q2gui.q2app import Q2App
 from q2gui.q2app import load_q2engine
 from q2gui.q2form import Q2Form
@@ -225,11 +227,8 @@ class Q2PdfComposer(Q2Form):
         boxes = self.page_view.get_boxes()
         k = self.image_dpi / 72
         result = []
-        result_d = []
-        for x in boxes:
-            result.append([])
-            result_d.append([])
         for page in self.pdf.pages():
+            result.append([])
             print(page.number)
             for index, x in enumerate(boxes):
                 print("\tchunk", index)
@@ -239,20 +238,32 @@ class Q2PdfComposer(Q2Form):
                 )
                 fname = f"output\\chunk-{index}-page-{page.number}.png"
                 pixmap.save(fname)
-                # print(str(pytesseract.image_to_string(fname)))
-                data = pytesseract.image_to_data(fname, output_type= pytesseract.Output.DICT)
-                json.dump(data, open(f"{fname}.json", "w"))
-                result_d[index].extend(data)
-                
+
+                data = pytesseract.image_to_data(fname, output_type=pytesseract.Output.DICT)
+                # json.dump(data, open(f"{fname}.json", "w"))
+                result[-1].append(data)
+
                 # csv = str(pytesseract.image_to_data(fname))
                 # open(f"{fname}.csv", "w").write(csv)
 
-                txt = str(pytesseract.image_to_string(fname))
-                result[index].extend(txt.split("\n"))
-                open(f"{fname}.txt", "w").write(txt)
-            break
+                # txt = str(pytesseract.image_to_string(fname))
+                # open(f"{fname}.txt", "w").write(txt)
         print("done")
-        
+        grand_result = ocr_json.json_ocr(result)
+        json.dump(grand_result, open(f"output\\data.json", "w"))
+
+        csv_writer = csv.DictWriter(
+            open("output\\data.csv", "w", encoding="utf-8"),
+            [x for x in grand_result[0]],
+            dialect="excel",
+            lineterminator="\n",
+            delimiter=";",
+        )
+        csv_writer.writeheader()
+        for x in grand_result:
+            csv_writer.writerow(x)
+        csv_writer = None
+
         self.close()
 
     def preview_changed(self, row):

@@ -1,4 +1,5 @@
 data
 output
+__pycache__
 *.png
 q2gui.ini
