@@ -2,6 +2,8 @@ import fitz
 import json
 import csv
 import ocr_json
+import io
+from PIL import Image as im
 from q2gui.q2app import Q2App
 from q2gui.q2app import load_q2engine
 from q2gui.q2form import Q2Form
@@ -237,9 +239,11 @@ class Q2PdfComposer(Q2Form):
                     dpi=self.image_dpi, alpha=False, colorspace=fitz.Colorspace(fitz.CS_GRAY), clip=clip
                 )
                 fname = f"output\\chunk-{index}-page-{page.number}.png"
-                pixmap.save(fname)
+                # pixmap.save(fname)
 
-                data = pytesseract.image_to_data(fname, output_type=pytesseract.Output.DICT)
+                bytes_pixmap = pixmap.tobytes(output='png')
+                
+                data = pytesseract.image_to_data(im.open(io.BytesIO(bytes_pixmap)), output_type=pytesseract.Output.DICT)
                 # json.dump(data, open(f"{fname}.json", "w"))
                 result[-1].append(data)
 
