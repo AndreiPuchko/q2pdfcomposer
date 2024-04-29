@@ -179,14 +179,14 @@ class PageView(QGraphicsView):
 
 
 class Q2PdfComposer(Q2Form):
-    def __init__(self, title="", pdf_file=None, lines=[]):
+    def __init__(self, title="", pdf_file=None):
         self.pdf = None
         self.pdf_file = pdf_file
         self.pdf_pages = {}
         self.preview_dpi = 10
         self.image_dpi = 300
-        self.lines = lines
         super().__init__(title)
+        self.lines = json.loads(self.q2_app.settings.get("pdf_composer", "lines", "[100]"))
 
     def on_init(self):
         self.read_pdf()
@@ -244,11 +244,11 @@ class Q2PdfComposer(Q2Form):
 
     def after_form_show(self):
         self.pages_preview.set_current_row(0)
-        # self.page_view.restore_lines([0, 1240, 2480])
         self.page_view.restore_lines(self.lines)
         return super().after_form_show()
 
     def after_form_closed(self):
+        self.q2_app.settings.set("pdf_composer", "lines", f"{self.get_lines()}")
         return super().after_form_closed()
 
     def get_page_image(self, page_number, dpi):
@@ -283,13 +283,8 @@ class DemoApp(Q2App):
 
     def on_new_tab(self):
         # form = Q2PdfComposer("Compose PDF", "data/test1.pdf")
-        form = Q2PdfComposer(
-            "Compose PDF",
-            "data/Scannen0001.pdf",
-            json.loads(self.settings.get("pdf_composer", "lines", "[100]")),
-        )
+        form = Q2PdfComposer("Compose PDF", "data/Scannen0001.pdf")
         form.run()
-        self.settings.set("pdf_composer", "lines", f"{form.get_lines()}")
         self.close()
 
 
