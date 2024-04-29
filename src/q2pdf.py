@@ -7,27 +7,23 @@ from PyQt6.QtWidgets import (
     QGraphicsSceneHoverEvent,
     QTableView,
     QAbstractItemView,
-    QLabel,
-    QScrollArea,
-    QSizePolicy,
-    QSpinBox,
     QGraphicsView,
     QGraphicsScene,
     QGraphicsItem,
     QGraphicsPixmapItem,
-    QGraphicsItemGroup,
-    QGraphicsRectItem,
     QGraphicsLineItem,
 )
-from PyQt6.QtGui import QMouseEvent, QPixmap, QImage, QPen, QShowEvent, QTransform, QCursor
+from PyQt6.QtGui import QMouseEvent, QPixmap, QImage, QPen, QCursor
 from PyQt6.QtCore import (
     QAbstractTableModel,
     QModelIndex,
     Qt,
-    QSize,
     QVariant,
     pyqtSignal,
 )
+import pytesseract
+
+pytesseract.pytesseract.tesseract_cmd = "C:\\Users\\andre\\Desktop\\pdflabels\\Tesseract-OCR\\tesseract.exe"
 
 load_q2engine(globals(), "PyQt6")
 
@@ -175,7 +171,14 @@ class PageView(QGraphicsView):
         self.fitInView(self.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
 
     def get_lines(self):
-        return [x.pos().toPoint().x() for x in self.lines]
+        return sorted([x.pos().toPoint().x() for x in self.lines])
+
+    def get_boxes(self):
+        lines = self.get_lines()
+        boxes = []
+        for x in range(len(lines) - 1):
+            boxes.append([lines[x], 0, lines[x + 1], int(self.pdf_image.boundingRect().height())])
+        return boxes
 
 
 class Q2PdfComposer(Q2Form):
@@ -219,7 +222,38 @@ class Q2PdfComposer(Q2Form):
         return self.page_view.get_lines()
 
     def ocr(self):
-        print(self.get_lines())
+        boxes = self.page_view.get_boxes()
+        k = self.image_dpi / 72
+        result = []
+        result_d = []
+        for x in boxes:
+            result.append([])
+            result_d.append([])
+        for page in self.pdf.pages():
+            print(page.number)
+            for index, x in enumerate(boxes):
+                print("\tchunk", index)
+                clip = (x[0] / k, x[1] / k, x[2] / k, x[3] / k)
+                pixmap = page.get_pixmap(
+                    dpi=self.image_dpi, alpha=False, colorspace=fitz.Colorspace(fitz.CS_GRAY), clip=clip
+                )
+                fname = f"output\\chunk-{index}-page-{page.number}.png"
+                pixmap.save(fname)
+                # print(str(pytesseract.image_to_string(fname)))
+                data = pytesseract.image_to_data(fname, output_type= pytesseract.Output.DICT)
+                json.dump(data, open(f"{fname}.json", "w"))
+                result_d[index].extend(data)
+                
+                # csv = str(pytesseract.image_to_data(fname))
+                # open(f"{fname}.csv", "w").write(csv)
+
+                txt = str(pytesseract.image_to_string(fname))
+                result[index].extend(txt.split("\n"))
+                open(f"{fname}.txt", "w").write(txt)
+            break
+        print("done")
+        
+        self.close()
 
     def preview_changed(self, row):
         if row < 0:
