@@ -1,10 +1,10 @@
-from typing import Any
 import fitz
-
+import json
 from q2gui.q2app import Q2App
 from q2gui.q2app import load_q2engine
 from q2gui.q2form import Q2Form
 from PyQt6.QtWidgets import (
+    QGraphicsSceneHoverEvent,
     QTableView,
     QAbstractItemView,
     QLabel,
@@ -13,10 +13,13 @@ from PyQt6.QtWidgets import (
     QSpinBox,
     QGraphicsView,
     QGraphicsScene,
+    QGraphicsItem,
     QGraphicsPixmapItem,
+    QGraphicsItemGroup,
+    QGraphicsRectItem,
     QGraphicsLineItem,
 )
-from PyQt6.QtGui import QMouseEvent, QPixmap, QImage, QPen, QTransform
+from PyQt6.QtGui import QMouseEvent, QPixmap, QImage, QPen, QShowEvent, QTransform, QCursor
 from PyQt6.QtCore import (
     QAbstractTableModel,
     QModelIndex,
@@ -108,50 +111,81 @@ class PdfPagesPreview(QTableView):
         self.setCurrentIndex(self.model().index(row, 0))
 
 
+class VerticalLine(QGraphicsLineItem):
+    def __init__(self, parent_item, pos_x) -> None:
+        super().__init__(0, 0, 0, parent_item.boundingRect().height())
+        self.moveBy(pos_x, 0)
+        self.setZValue(2)
+        self.setFlags(
+            QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
+            | QGraphicsItem.GraphicsItemFlag.ItemIsMovable
+            | QGraphicsItem.GraphicsItemFlag.ItemIsFocusable
+            | QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges
+            | QGraphicsItem.GraphicsItemFlag.ItemSendsScenePositionChanges
+        )
+        self.setPen(QPen(Qt.GlobalColor.darkBlue, 8))
+        self.setParentItem(parent_item)
+        self.setAcceptHoverEvents(True)
+
+    def hoverEnterEvent(self, event: QGraphicsSceneHoverEvent) -> None:
+        self.setCursor(QCursor(Qt.CursorShape.SizeHorCursor))
+        return super().hoverEnterEvent(event)
+
+
 class PageView(QGraphicsView):
     def __init__(self):
         super().__init__()
-        self.scene = QGraphicsScene()
+        self.scene: QGraphicsScene = QGraphicsScene()
         self.setScene(self.scene)
-        self.item = QGraphicsPixmapItem()
-        self.scene.addItem(self.item)
+        self.pdf_image = QGraphicsPixmapItem()
+        self.scene.addItem(self.pdf_image)
+        self.setBackgroundBrush(Qt.GlobalColor.lightGray)
         self.lines = []
 
     def set_image(self, pixmap):
-        self.item.setPixmap(pixmap)
-        # self.scene.setSceneRect(0, 0, pixmap.width(), pixmap.height())
-        # print(self.rect(), self.sceneRect())
+        self.pdf_image.setPixmap(pixmap)
         self.fitInView(self.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
 
-    def mousePressEvent(self, event: QMouseEvent):
-        pos = self.mapToScene(event.pos())
-        # item_at = self.scene.itemAt(pos, QTransform())
-        # print(item_at, pos.x(), [x.sceneBoundingRect().x() for x in self.lines])
-        if len(self.items(event.pos())) <= 1:
-            line: QGraphicsLineItem = self.scene.addLine(
-                pos.x(), 0, pos.x(), self.sceneRect().height(), QPen(Qt.GlobalColor.darkBlue, 8)
-            )
-            line.setFlags(
-                QGraphicsLineItem.GraphicsItemFlag.ItemIsMovable
-                | QGraphicsLineItem.GraphicsItemFlag.ItemIsSelectable
-            )
-            self.lines.append(line)
-            event.ignore()
+    def mouseReleaseEvent(self, event: QMouseEvent):
+        x_pos = self.mapToScene(event.pos()).x()
+        width = self.sceneRect().width()
+        focus_item = self.scene.focusItem()
+        if focus_item is None:
+            if x_pos > 0 and x_pos < width:
+                self.add_line(x_pos)
         else:
-            return super().mousePressEvent(event)
+            if x_pos < 0 or x_pos > width:
+                self.scene.removeItem(focus_item)
+                self.lines.pop(self.lines.index(focus_item))
+            else:
+                focus_item.setPos(focus_item.pos().x(), 0)
+        return super().mouseReleaseEvent(event)
+
+    def restore_lines(self, lines):
+        for x in lines:
+            self.add_line(x)
+
+    def add_line(self, pos_x):
+        self.lines.append(VerticalLine(self.pdf_image, pos_x))
+        self.update()
 
     def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.setSceneRect(self.pdf_image.boundingRect())
         self.fitInView(self.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
-        return super().resizeEvent(event)
+
+    def get_lines(self):
+        return [x.pos().toPoint().x() for x in self.lines]
 
 
 class Q2PdfComposer(Q2Form):
-    def __init__(self, title="", pdf_file=None):
+    def __init__(self, title="", pdf_file=None, lines=[]):
         self.pdf = None
         self.pdf_file = pdf_file
         self.pdf_pages = {}
         self.preview_dpi = 10
         self.image_dpi = 300
+        self.lines = lines
         super().__init__(title)
 
     def on_init(self):
@@ -159,7 +193,7 @@ class Q2PdfComposer(Q2Form):
 
         self.pages_model = PagesModel(self.pdf_pages)
         self.pages_preview = PdfPagesPreview(self.pdf_pages)
-        self.page_image = PageView()
+        self.page_view = PageView()
         self.pages_preview.row_selected.connect(self.preview_changed)
         self.pages_preview.setModel(self.pages_model)
 
@@ -172,18 +206,25 @@ class Q2PdfComposer(Q2Form):
         self.add_control(
             "image_dpi", "Image DPI", control="spin", data=self.image_dpi, valid=self.image_dpi_valid
         )
+        self.add_control("ocr", "OCR", control="button", datalen=10, valid=self.ocr)
         self.add_control("/")
         self.add_control("/h")
         self.add_control("pages", widget=self.pages_preview)
-        self.add_control("page_image", widget=self.page_image, stretch=99)
+        self.add_control("page_image", widget=self.page_view, stretch=99)
         self.add_control("/")
         self.maximized = True
         return super().on_init()
 
+    def get_lines(self):
+        return self.page_view.get_lines()
+
+    def ocr(self):
+        print(self.get_lines())
+
     def preview_changed(self, row):
         if row < 0:
             return
-        self.page_image.set_image(self.get_page_image(row, dpi=self.image_dpi))
+        self.page_view.set_image(self.get_page_image(row, dpi=self.image_dpi))
 
     def image_dpi_valid(self):
         _dpi = int(self.s.image_dpi)
@@ -203,7 +244,12 @@ class Q2PdfComposer(Q2Form):
 
     def after_form_show(self):
         self.pages_preview.set_current_row(0)
+        # self.page_view.restore_lines([0, 1240, 2480])
+        self.page_view.restore_lines(self.lines)
         return super().after_form_show()
+
+    def after_form_closed(self):
+        return super().after_form_closed()
 
     def get_page_image(self, page_number, dpi):
         pixmap = self.pdf[page_number].get_pixmap(dpi=dpi, alpha=False)
@@ -236,8 +282,14 @@ class DemoApp(Q2App):
         return super().on_init()
 
     def on_new_tab(self):
-        form = Q2PdfComposer("Compose PDF", "data/test1.pdf")
+        # form = Q2PdfComposer("Compose PDF", "data/test1.pdf")
+        form = Q2PdfComposer(
+            "Compose PDF",
+            "data/Scannen0001.pdf",
+            json.loads(self.settings.get("pdf_composer", "lines", "[100]")),
+        )
         form.run()
+        self.settings.set("pdf_composer", "lines", f"{form.get_lines()}")
         self.close()
 
 
