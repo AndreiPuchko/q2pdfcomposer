@@ -6,7 +6,9 @@ import io
 from PIL import Image as im
 from q2gui.q2app import Q2App
 from q2gui.q2app import load_q2engine
+from q2gui.q2dialogs import q2wait
 from q2gui.q2form import Q2Form
+from q2rad.q2utils import open_document
 from PyQt6.QtWidgets import (
     QGraphicsSceneHoverEvent,
     QTableView,
@@ -16,8 +18,9 @@ from PyQt6.QtWidgets import (
     QGraphicsItem,
     QGraphicsPixmapItem,
     QGraphicsLineItem,
+    QApplication,
 )
-from PyQt6.QtGui import QMouseEvent, QPixmap, QImage, QPen, QCursor
+from PyQt6.QtGui import QKeyEvent, QMouseEvent, QPixmap, QImage, QPen, QCursor
 from PyQt6.QtCore import (
     QAbstractTableModel,
     QModelIndex,
@@ -110,6 +113,9 @@ class PdfPagesPreview(QTableView):
     def set_current_row(self, row):
         self.setCurrentIndex(self.model().index(row, 0))
 
+    def get_selected_rows(self):
+        return [x.row() for x in self.selectionModel().selectedRows() if not self.isRowHidden(x.row())]
+
 
 class VerticalLine(QGraphicsLineItem):
     def __init__(self, parent_item, pos_x) -> None:
@@ -130,6 +136,13 @@ class VerticalLine(QGraphicsLineItem):
     def hoverEnterEvent(self, event: QGraphicsSceneHoverEvent) -> None:
         self.setCursor(QCursor(Qt.CursorShape.SizeHorCursor))
         return super().hoverEnterEvent(event)
+
+    def keyPressEvent(self, event: QKeyEvent):
+        if event.key() == Qt.Key.Key_Left:
+            self.moveBy(-1, 0)
+        elif event.key() == Qt.Key.Key_Right:
+            self.moveBy(1, 0)
+        return super().keyPressEvent(event)
 
 
 class PageView(QGraphicsView):
@@ -186,17 +199,20 @@ class PageView(QGraphicsView):
 
 
 class Q2PdfComposer(Q2Form):
-    def __init__(self, title="", pdf_file=None):
+    def __init__(self, pdf_file=None):
         self.pdf = None
         self.pdf_file = pdf_file
         self.pdf_pages = {}
         self.preview_dpi = 10
         self.image_dpi = 300
-        super().__init__(title)
+        super().__init__("Compose PDF")
         self.lines = json.loads(self.q2_app.settings.get("pdf_composer", "lines", "[100]"))
+        self.save_debug_data = False
 
     def on_init(self):
         self.read_pdf()
+        self.base_column = self.q2_app.settings.get("pdf_composer", "base_column", "1")
+        self.string_delta = self.q2_app.settings.get("pdf_composer", "string_delta", "59")
 
         self.pages_model = PagesModel(self.pdf_pages)
         self.pages_preview = PdfPagesPreview(self.pdf_pages)
@@ -211,9 +227,38 @@ class Q2PdfComposer(Q2Form):
             "preview_dpi", "Preview DPI", control="spin", data=self.preview_dpi, valid=self.preview_dpi_valid
         )
         self.add_control(
-            "image_dpi", "Image DPI", control="spin", data=self.image_dpi, valid=self.image_dpi_valid
+            "base_column",
+            "Base column",
+            control="spin",
+            datatype="int",
+            data=self.base_column,
+            valid=self.ocr_settings_valid,
         )
-        self.add_control("ocr", "OCR", control="button", datalen=10, valid=self.ocr)
+        self.add_control(
+            "string_delta",
+            "String delta",
+            control="spin",
+            datatype="int",
+            data=self.string_delta,
+            valid=self.ocr_settings_valid,
+        )
+        self.add_control("radio_page", "Pages", control="radio", pic="All;Selected", datatype="int")
+        self.add_control(
+            "ocr",
+            "GO!",
+            control="button",
+            datalen=5,
+            style=" *{background:lime;color:black} *:hover{background:chartreuse}",
+            valid=self.ocr,
+        )
+        self.add_control(
+            "save_debug_data",
+            control="check",
+            pic="Save debug data",
+            data="",
+            valid=self.ocr_settings_valid,
+        )
+        self.add_control("/s")
         self.add_control("/")
         self.add_control("/h")
         self.add_control("pages", widget=self.pages_preview)
@@ -222,14 +267,23 @@ class Q2PdfComposer(Q2Form):
         self.maximized = True
         return super().on_init()
 
+    def ocr_settings_valid(self):
+        self.base_column = int(self.s.base_column)
+        self.string_delta = int(self.s.string_delta)
+
     def get_lines(self):
         return self.page_view.get_lines()
 
     def ocr(self):
+        selected_rows = self.pages_preview.get_selected_rows()
         boxes = self.page_view.get_boxes()
         k = self.image_dpi / 72
         result = []
+        w = q2wait(self.pdf.page_count)
         for page in self.pdf.pages():
+            w.step()
+            if int(self.s.radio_page) == 2 and page.number not in selected_rows:
+                continue
             result.append([])
             print(page.number)
             for index, x in enumerate(boxes):
@@ -238,26 +292,35 @@ class Q2PdfComposer(Q2Form):
                 pixmap = page.get_pixmap(
                     dpi=self.image_dpi, alpha=False, colorspace=fitz.Colorspace(fitz.CS_GRAY), clip=clip
                 )
-                fname = f"output\\chunk-{index}-page-{page.number}.png"
+                fname = f"temp\\chunk-{index}-page-{page.number}.png"
                 # pixmap.save(fname)
 
-                bytes_pixmap = pixmap.tobytes(output='png')
-                
-                data = pytesseract.image_to_data(im.open(io.BytesIO(bytes_pixmap)), output_type=pytesseract.Output.DICT)
-                # json.dump(data, open(f"{fname}.json", "w"))
-                result[-1].append(data)
+                bytes_pixmap = pixmap.tobytes(output="png")
 
-                # csv = str(pytesseract.image_to_data(fname))
-                # open(f"{fname}.csv", "w").write(csv)
+                chunk_data = pytesseract.image_to_data(
+                    im.open(io.BytesIO(bytes_pixmap)), output_type=pytesseract.Output.DICT
+                )
+                result[-1].append(chunk_data)
 
+                if self.save_debug_data:
+                    ocr_csv_text = str(pytesseract.image_to_data(im.open(io.BytesIO(bytes_pixmap))))
+                    open(f"{fname}.csv", "w").write(ocr_csv_text)
                 # txt = str(pytesseract.image_to_string(fname))
                 # open(f"{fname}.txt", "w").write(txt)
+        w.close()
         print("done")
-        grand_result = ocr_json.json_ocr(result)
-        json.dump(grand_result, open(f"output\\data.json", "w"))
+        if self.save_debug_data:
+            json.dump(result, open(f"temp/raw_ocr_data.json", "w"))
 
+        grand_result = ocr_json.json_ocr(
+            result, base_column=int(self.base_column), string_delta=int(self.string_delta)
+        )
+        if self.save_debug_data:
+            json.dump(grand_result, open(f"temp\\data.json", "w"))
+
+        result_csv_file_name = "temp\\data.csv"
         csv_writer = csv.DictWriter(
-            open("output\\data.csv", "w", encoding="utf-8"),
+            open(result_csv_file_name, "w", encoding="utf-8"),
             [x for x in grand_result[0]],
             dialect="excel",
             lineterminator="\n",
@@ -267,19 +330,12 @@ class Q2PdfComposer(Q2Form):
         for x in grand_result:
             csv_writer.writerow(x)
         csv_writer = None
-
-        self.close()
+        open_document(result_csv_file_name)
 
     def preview_changed(self, row):
         if row < 0:
             return
         self.page_view.set_image(self.get_page_image(row, dpi=self.image_dpi))
-
-    def image_dpi_valid(self):
-        _dpi = int(self.s.image_dpi)
-        if _dpi < 3 or _dpi > 50:
-            self.s.image_dpi = self.image_dpi
-            return
 
     def preview_dpi_valid(self):
         _dpi = int(self.s.preview_dpi)
@@ -298,6 +354,8 @@ class Q2PdfComposer(Q2Form):
 
     def after_form_closed(self):
         self.q2_app.settings.set("pdf_composer", "lines", f"{self.get_lines()}")
+        self.q2_app.settings.set("pdf_composer", "base_column", f"{self.base_column}")
+        self.q2_app.settings.set("pdf_composer", "string_delta", f"{self.string_delta}")
         return super().after_form_closed()
 
     def get_page_image(self, page_number, dpi):
@@ -331,8 +389,8 @@ class DemoApp(Q2App):
         return super().on_init()
 
     def on_new_tab(self):
-        # form = Q2PdfComposer("Compose PDF", "data/test1.pdf")
-        form = Q2PdfComposer("Compose PDF", "data/Scannen0001.pdf")
+        # form = Q2PdfComposer("data/test1.pdf")
+        form = Q2PdfComposer("data/Scannen0001.pdf")
         form.run()
         self.close()
 

@@ -1,7 +1,7 @@
 import json
 
 
-def extract_rows_from_chunk_data(data):
+def extract_rows_from_chunk_data(data, string_delta):
     res = []
 
     row_count = len(data["level"])
@@ -14,7 +14,7 @@ def extract_rows_from_chunk_data(data):
     for row in range(row_count):
         if data["level"][row] != 5:
             continue
-        if data["top"][row] - _last_top > 50:
+        if data["top"][row] - _last_top > string_delta:
             res.append({"text": _text, "top": _top, "bottom": _bottom})
             _text = ""
             _top = 999999999999
@@ -29,25 +29,29 @@ def extract_rows_from_chunk_data(data):
     return res
 
 
-def json_ocr(data):
+def json_ocr(data, base_column=1, string_delta=59):
     grand_result = []
     for page in data:
         page_result = []
         for chunk in page:
-            page_result.append(extract_rows_from_chunk_data(chunk))
-        for main_column_row in page_result[0]:
-            for index, other_column in enumerate(page_result[1:]):
+            page_result.append(extract_rows_from_chunk_data(chunk, string_delta))
+        for main_column_row in page_result[base_column - 1]:
+            for index, other_column in enumerate(page_result):
+                if index == base_column - 1:
+                    continue
                 for other_column_row in other_column:
                     if (
                         other_column_row["top"] >= main_column_row["top"]
                         and other_column_row["top"] <= main_column_row["bottom"]
                     ):
                         main_column_row[f"other_column_{index}"] = other_column_row["text"]
+                    if f"other_column_{index}" not in main_column_row:
+                        main_column_row[f"other_column_{index}"] = ""
             del main_column_row["bottom"]
             del main_column_row["top"]
-        for row in page_result[0]:
-            if len(row) == len(page_result):
-                grand_result.append(row)
+        for row in page_result[base_column - 1]:
+            # if len([1 for x in row.values() if len(x.strip())==0]) <= 1:
+            grand_result.append(row)
     return grand_result
 
 
