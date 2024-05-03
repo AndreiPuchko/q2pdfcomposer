@@ -4,6 +4,8 @@ import pytesseract
 from PIL import Image as im
 import io
 import ocr_json
+import csv
+import json
 
 
 from PyQt6.QtWidgets import (
@@ -26,13 +28,75 @@ from PyQt6.QtGui import (
     QImage,
     QPen,
     QCursor,
-    QResizeEvent,
     QWheelEvent,
     QPainter,
 )
 from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex, QVariant, pyqtSignal, QRectF
 
 pytesseract.pytesseract.tesseract_cmd = "C:\\Users\\andre\\Desktop\\pdflabels\\Tesseract-OCR\\tesseract.exe"
+
+
+def extract_rows_from_chunk_data(data, string_delta):
+    res = []
+
+    row_count = len(data["level"])
+
+    # for key, value in data.items():
+    _text = ""
+    _top = 999999999999
+    _bottom = 0
+    _last_top = 0
+    for row in range(row_count):
+        if data["level"][row] != 5:
+            continue
+        if data["top"][row] < _last_top:
+            continue
+        if data["top"][row] - _last_top > string_delta:
+            res.append({"text": _text.strip(), "top": _top, "bottom": _bottom})
+            _text = ""
+            _top = 999999999999
+            _bottom = 0
+        if len(data["text"][row]) > 1:
+            _text += " " + data["text"][row]
+            _top = min(data["top"][row], _top)
+            _bottom = max(data["top"][row] + data["height"][row], _bottom)
+            _last_top = data["top"][row]
+    res.append({"text": _text.strip(), "top": _top, "bottom": _bottom})
+    # for x in res:
+    #     print(x['top'], x["text"][:100])
+    return res
+
+
+def json_ocr(data, base_column=1, string_delta=59):
+    grand_result = []
+    for page in data:
+        page_result = []
+        for chunk in page:
+            page_result.append(extract_rows_from_chunk_data(chunk, string_delta))
+        for main_column_row in page_result[base_column - 1]:
+            for index, other_column in enumerate(page_result):
+                if index == base_column - 1:
+                    continue
+                for other_column_row in other_column:
+                    if (
+                        other_column_row["top"] >= main_column_row["top"]
+                        and other_column_row["top"] <= main_column_row["bottom"]
+                    ):
+                        main_column_row[f"other_column_{index}"] = other_column_row["text"]
+                    if f"other_column_{index}" not in main_column_row:
+                        main_column_row[f"other_column_{index}"] = ""
+            del main_column_row["bottom"]
+            del main_column_row["top"]
+        for row in page_result[base_column - 1]:
+            # if len([1 for x in row.values() if len(x.strip())==0]) <= 1:
+            grand_result.append(row)
+    return grand_result
+
+
+# if __name__ == "__main__":
+#     data = json.load(open("temp/raw_ocr_data.json"))
+#     rez = json_ocr(data)
+#     print(rez[2])
 
 
 class PagesModel(QAbstractTableModel):
@@ -215,12 +279,14 @@ class Q2PdfWidget(QWidget):
         self.main_layout = QHBoxLayout()
         self.setLayout(self.main_layout)
         self.main_layout.setContentsMargins(1, 1, 1, 1)
+        self.meta = {}
 
         self._preview_dpi = 10
         self.image_dpi = 300
         self.base_column = 1
         self.string_delta = 58
         self.pdf_pages = {}
+        self.debug_data = None
         self.pages_view = PdfPagesPreview()
         self.pages_view.row_selected.connect(self.preview_page_changed)
         self.pages_model = PagesModel(self.pdf_pages)
@@ -282,33 +348,44 @@ class Q2PdfWidget(QWidget):
     def get_lines(self):
         return self.page_view.get_lines()
 
-    def get_ocr_steps(self):
-        return len(self.pages_view.get_selected_rows()) * len(self.page_view.get_boxes())
+    def get_ocr_steps(self,page_numbers=None):
+        if page_numbers is None:
+            page_numbers = self.pages_view.get_selected_rows()
+        if not isinstance(page_numbers, list):
+            page_numbers = [int(page_numbers)]
+        return len(page_numbers) * len(self.page_view.get_boxes())
 
-    def ocr(self, page_numbers=None, debug=False, progress_callback=None):
+    def get_page_count(self):
+        return self.pages_view.model().rowCount()
+
+    def get_selected_pages(self):
+        return self.pages_view.get_selected_rows()
+
+    def ocr(self, page_numbers=None, debug=False, progress_callback=None, save_csv_file=True):
         boxes = self.page_view.get_boxes()
         k = self.image_dpi / 72
 
         if page_numbers is None:
             page_numbers = self.pages_view.get_selected_rows()
-            print(page_numbers)
         if not isinstance(page_numbers, list):
             page_numbers = [int(page_numbers)]
 
         result = []
+        debug_data = []
 
         for page in self.pdf.pages():
             if page.number not in page_numbers:
                 continue
 
-            print(page.number)
+            result.append([])
 
             for index, x in enumerate(boxes):
                 if callable(progress_callback):
                     progress_callback()
+                debug_data.append([])
                 chunk = {}
-                result.append(chunk)
-                print("\tchunk", index)
+
+                # print("\tchunk", index)
                 debug_file_name = f"temp\\chunk-{index}-page-{page.number}"
                 chunk["debug_file_name"] = debug_file_name
 
@@ -325,17 +402,37 @@ class Q2PdfWidget(QWidget):
                 chunk_data = pytesseract.image_to_data(
                     im.open(io.BytesIO(bytes_pixmap)), output_type=pytesseract.Output.DICT
                 )
+                result[-1].append(chunk_data)
                 chunk["data"] = chunk_data
+                debug_data[-1].append(chunk)
 
                 if debug:
                     ocr_csv_text = str(pytesseract.image_to_data(im.open(io.BytesIO(bytes_pixmap))))
                     chunk["csv"] = ocr_csv_text
 
-        table = ocr_json.json_ocr(
-            [[x["data"] for x in result]], base_column=self.base_column, string_delta=self.string_delta
-        )
+        table = json_ocr(result, base_column=self.base_column, string_delta=self.string_delta)
+        self.debug_data = debug_data
+        if save_csv_file:
+            return self.save_csv(table)
+        else:
+            return table
 
-        return table, result
+    def save_csv(self, table):
+        result_csv_file_name = "temp\\data.csv"
+        csv_writer = csv.DictWriter(
+            open(result_csv_file_name, "w", encoding="utf-8"),
+            [x for x in table[0]],
+            dialect="excel",
+            lineterminator="\n",
+            delimiter=";",
+        )
+        csv_writer.writeheader()
+        for x in table:
+            csv_writer.writerow(x)
+        csv_writer = None
+        return result_csv_file_name
+
+        # open_document(result_csv_file_name)
 
 
 if __name__ == "__main__":
@@ -349,6 +446,7 @@ if __name__ == "__main__":
     widget.move(100, 100)
     app.exec()
     # print(widget.get_lines())
-    print(widget.ocr(debug=False)[0])
+    print(widget.ocr())
+
     # print(widget.get_ocr_steps())
     sys.exit(0)
