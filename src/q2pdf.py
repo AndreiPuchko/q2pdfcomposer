@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import (
     QGraphicsLineItem,
     QApplication,
 )
-from PyQt6.QtGui import QKeyEvent, QMouseEvent, QPixmap, QImage, QPen, QCursor
+from PyQt6.QtGui import QKeyEvent, QMouseEvent, QPixmap, QImage, QPen, QCursor, QWheelEvent
 from PyQt6.QtCore import (
     QAbstractTableModel,
     QModelIndex,
@@ -174,6 +174,10 @@ class PageView(QGraphicsView):
                 focus_item.setPos(focus_item.pos().x(), 0)
         return super().mouseReleaseEvent(event)
 
+    def wheelEvent(self, event: QWheelEvent):
+        print(event.angleDelta())
+        return super().wheelEvent(event)
+
     def restore_lines(self, lines):
         for x in lines:
             self.add_line(x)
@@ -209,6 +213,12 @@ class Q2PdfComposer(Q2Form):
         self.lines = json.loads(self.q2_app.settings.get("pdf_composer", "lines", "[100]"))
         self.save_debug_data = False
 
+    def open_pdf(self):
+        file = Q2App.get_open_file_dialoq("Select PDF document", ".", "PDF (*.pdf)")
+        if file:
+            self.pdf_file = file[0]
+            self.read_pdf()
+
     def on_init(self):
         self.read_pdf()
         self.base_column = self.q2_app.settings.get("pdf_composer", "base_column", "1")
@@ -221,8 +231,9 @@ class Q2PdfComposer(Q2Form):
         self.pages_preview.setModel(self.pages_model)
 
         self.add_control("/")
-        self.add_control("/vs")
-        self.add_control("/h")
+        self.add_control("/v")
+        self.add_control("/h", tag="toolbox")
+        self.add_control("select_pdf", 'Select PDF file', control="toolbutton", valid=self.open_pdf)
         self.add_control(
             "preview_dpi", "Preview DPI", control="spin", data=self.preview_dpi, valid=self.preview_dpi_valid
         )
@@ -270,6 +281,7 @@ class Q2PdfComposer(Q2Form):
     def ocr_settings_valid(self):
         self.base_column = int(self.s.base_column)
         self.string_delta = int(self.s.string_delta)
+        self.save_debug_data = self.s.save_debug_data
 
     def get_lines(self):
         return self.page_view.get_lines()
@@ -350,6 +362,7 @@ class Q2PdfComposer(Q2Form):
     def after_form_show(self):
         self.pages_preview.set_current_row(0)
         self.page_view.restore_lines(self.lines)
+        self.w.preview_dpi.label.set_alignment(4)
         return super().after_form_show()
 
     def after_form_closed(self):
@@ -385,7 +398,7 @@ class DemoApp(Q2App):
 
     def on_init(self):
         # self.hide_menubar()
-        self.hide_tabbar()
+        # self.hide_tabbar()
         return super().on_init()
 
     def on_new_tab(self):

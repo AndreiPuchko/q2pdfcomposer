@@ -14,16 +14,19 @@ def extract_rows_from_chunk_data(data, string_delta):
     for row in range(row_count):
         if data["level"][row] != 5:
             continue
+        if data["top"][row] < _last_top:
+            continue
         if data["top"][row] - _last_top > string_delta:
-            res.append({"text": _text, "top": _top, "bottom": _bottom})
+            res.append({"text": _text.strip(), "top": _top, "bottom": _bottom})
             _text = ""
             _top = 999999999999
             _bottom = 0
-        _text += " " + data["text"][row]
-        _top = min(data["top"][row], _top)
-        _bottom = max(data["top"][row] + data["height"][row], _bottom)
-        _last_top = data["top"][row]
-    res.append({"text": _text, "top": _top, "bottom": _bottom})
+        if len(data["text"][row]) > 1:
+            _text += " " + data["text"][row]
+            _top = min(data["top"][row], _top)
+            _bottom = max(data["top"][row] + data["height"][row], _bottom)
+            _last_top = data["top"][row]
+    res.append({"text": _text.strip(), "top": _top, "bottom": _bottom})
     # for x in res:
     #     print(x['top'], x["text"][:100])
     return res
@@ -56,6 +59,6 @@ def json_ocr(data, base_column=1, string_delta=59):
 
 
 if __name__ == "__main__":
-    data = json.load(open("data.json"))
+    data = json.load(open("temp/raw_ocr_data.json"))
     rez = json_ocr(data)
-    print(len(rez))
+    print(rez[2])
