@@ -7,7 +7,6 @@ import csv
 
 
 from PyQt6.QtWidgets import (
-    QGraphicsSceneHoverEvent,
     QTableView,
     QAbstractItemView,
     QGraphicsView,
@@ -15,22 +14,26 @@ from PyQt6.QtWidgets import (
     QGraphicsItem,
     QGraphicsPixmapItem,
     QGraphicsLineItem,
+    QGraphicsDropShadowEffect,
+    QGraphicsBlurEffect,
     QApplication,
     QHBoxLayout,
     QWidget,
 )
 from PyQt6.QtGui import (
+    QFocusEvent,
     QKeyEvent,
     QMouseEvent,
     QPixmap,
     QImage,
     QPen,
+    QBrush,
     QCursor,
     QShowEvent,
     QWheelEvent,
     QPainter,
 )
-from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex, QVariant, pyqtSignal, QRectF, QPoint
+from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex, QVariant, pyqtSignal, QRectF
 
 pytesseract.pytesseract.tesseract_cmd = "C:\\Users\\andre\\Desktop\\pdflabels\\Tesseract-OCR\\tesseract.exe"
 
@@ -92,12 +95,6 @@ def json_ocr(data, base_column=1, string_delta=59):
     return grand_result
 
 
-# if __name__ == "__main__":
-#     data = json.load(open("temp/raw_ocr_data.json"))
-#     rez = json_ocr(data)
-#     print(rez[2])
-
-
 class PagesModel(QAbstractTableModel):
     def __init__(self, pdf_pages):
         super().__init__()
@@ -122,20 +119,6 @@ class PagesModel(QAbstractTableModel):
             if index.column() == 0:
                 return self.pdf_pages[index.row()]["preview"].size()
         return QVariant()
-
-    def headerData(self, section: int, orientation: Qt.Orientation, role):
-        if orientation == Qt.Orientation.Horizontal and role == Qt.ItemDataRole.DisplayRole:
-            if section == 0:
-                return "#"
-            elif section == 1:
-                return "Thumbnail"
-        elif orientation == Qt.Orientation.Vertical:
-            if role == Qt.ItemDataRole.DisplayRole:
-                return QVariant(section + 1)
-            elif role == Qt.ItemDataRole.TextAlignmentRole:
-                return Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop
-        else:
-            return QVariant()
 
     def refresh(self):
         self.beginResetModel()
@@ -197,7 +180,7 @@ class VerticalLine(QGraphicsLineItem):
     def __init__(self, parent_item, pos_x) -> None:
         super().__init__(0, 0, 0, parent_item.boundingRect().height())
         self.moveBy(pos_x, 0)
-        self.setZValue(2)
+        # self.setZValue(2)
         self.setFlags(
             QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
             | QGraphicsItem.GraphicsItemFlag.ItemIsMovable
@@ -205,9 +188,24 @@ class VerticalLine(QGraphicsLineItem):
             | QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges
             | QGraphicsItem.GraphicsItemFlag.ItemSendsScenePositionChanges
         )
+
         self.setPen(QPen(Qt.GlobalColor.darkBlue, 8))
         self.setParentItem(parent_item)
+        ef = QGraphicsDropShadowEffect()
+        ef.setColor(Qt.GlobalColor.green)
+        ef.setOffset(0)
+        ef.setBlurRadius(20)
+        self.setGraphicsEffect(ef)
+        self.graphicsEffect().setEnabled(False)
         self.setAcceptHoverEvents(True)
+
+    def focusInEvent(self, event: QFocusEvent | None) -> None:
+        self.graphicsEffect().setEnabled(True)
+        return super().focusInEvent(event)
+
+    def focusOutEvent(self, event: QFocusEvent | None) -> None:
+        self.graphicsEffect().setEnabled(False)
+        return super().focusOutEvent(event)
 
     def keyPressEvent(self, event: QKeyEvent):
         if event.key() == Qt.Key.Key_Left:
@@ -237,16 +235,17 @@ class PageView(QGraphicsView):
         self.pdf_image.setPixmap(pixmap)
         self.setSceneRect(self.pdf_image.boundingRect())
 
-    def showEvent(self, event: QShowEvent | None) -> None:
+    def showEvent(self, event: QShowEvent) -> None:
         super().showEvent(event)
         self.fitInView(self.pdf_image, Qt.AspectRatioMode.KeepAspectRatio)
 
     def mousePressEvent(self, event: QMouseEvent):
+        super().mousePressEvent(event)
         self.mouse_click_pos = event.pos()
-        return super().mousePressEvent(event)
 
     def mouseReleaseEvent(self, event: QMouseEvent):
         self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
+        super().mouseReleaseEvent(event)
 
         x_pos = self.mapToScene(event.pos()).x()
         width = self.sceneRect().width()
@@ -262,33 +261,42 @@ class PageView(QGraphicsView):
             if x_pos < 0 or x_pos > width:
                 self.scene.removeItem(focus_item)
                 self.lines.pop(self.lines.index(focus_item))
+                self.clearFocus()
             else:
                 focus_item.setPos(focus_item.pos().x(), 0)
         self.mouse_click_pos = None
-        return super().mouseReleaseEvent(event)
 
-    def mouseMoveEvent(self, event: QMouseEvent | None) -> None:
-        if self.drag_mode:
-            self.setCursor(QCursor(Qt.CursorShape.OpenHandCursor))
-        if isinstance(self.itemAt(event.pos()), VerticalLine):
+    def mouseMoveEvent(self, event: QMouseEvent):
+        super().mouseMoveEvent(event)
+        item_at_pos = self.itemAt(event.pos())
+        if isinstance(item_at_pos, VerticalLine):
             self.setCursor(QCursor(Qt.CursorShape.SizeHorCursor))
-            super().mouseMoveEvent(event)
-        elif self.scene.focusItem() is None:
-            if self.mouse_click_pos is not None:
-                self.drag_mode = True
-                delta = self.mouse_click_pos - event.pos()
-                if self.horizontalScrollBar().isVisible():
-                    self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() + delta.x())
-                if self.verticalScrollBar().isVisible():
-                    self.verticalScrollBar().setValue(self.verticalScrollBar().value() + delta.y())
-                self.mouse_click_pos = event.pos()
-                self.setCursor(QCursor(Qt.CursorShape.OpenHandCursor))
-            else:
-                self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
         else:
-            super().mouseMoveEvent(event)
+            self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
+        if event.buttons() == Qt.MouseButton.LeftButton:
+            if item_at_pos == self.pdf_image:
+                if self.mouse_click_pos is not None:
+                    self.drag_mode = True
+                    delta = self.mouse_click_pos - event.pos()
+                    if self.horizontalScrollBar().isVisible():
+                        self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() + delta.x())
+                    if self.verticalScrollBar().isVisible():
+                        self.verticalScrollBar().setValue(self.verticalScrollBar().value() + delta.y())
+                    self.mouse_click_pos = event.pos()
+                    self.setCursor(QCursor(Qt.CursorShape.OpenHandCursor))
 
-    def ensure_fit_in(self):
+    def keyPressEvent(self, event: QKeyEvent):
+        if event.key() == Qt.Key.Key_PageDown:
+            self.next_page.emit(1)
+        elif event.key() == Qt.Key.Key_PageUp:
+            self.next_page.emit(-1)
+        else:
+            if self.scene.focusItem() is not None:
+                self.scene.focusItem().keyPressEvent(event)
+            else:
+                QGraphicsView.keyPressEvent(self, event)
+
+    def ensure_minimal_zoom(self):
         tlp = self.mapFromScene(0, 0)
         brp = self.mapFromScene(self.sceneRect().size().width(), self.sceneRect().size().height())
 
@@ -309,8 +317,7 @@ class PageView(QGraphicsView):
                 factor = 0.9
 
             self.scale(factor, factor)
-            self.ensure_fit_in()
-        # return super().wheelEvent(event)
+            self.ensure_minimal_zoom()
 
     def restore_lines(self, lines):
         for x in lines:
@@ -318,11 +325,10 @@ class PageView(QGraphicsView):
 
     def add_line(self, pos_x):
         self.lines.append(VerticalLine(self.pdf_image, pos_x))
-        self.update()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self.ensure_fit_in()
+        self.ensure_minimal_zoom()
 
     def get_lines(self):
         return sorted([x.pos().toPoint().x() for x in self.lines])
