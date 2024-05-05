@@ -3,9 +3,7 @@ import fitz
 import pytesseract
 from PIL import Image as im
 import io
-import ocr_json
 import csv
-import json
 
 
 from PyQt6.QtWidgets import (
@@ -28,10 +26,11 @@ from PyQt6.QtGui import (
     QImage,
     QPen,
     QCursor,
+    QShowEvent,
     QWheelEvent,
     QPainter,
 )
-from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex, QVariant, pyqtSignal, QRectF
+from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex, QVariant, pyqtSignal, QRectF, QPoint
 
 pytesseract.pytesseract.tesseract_cmd = "C:\\Users\\andre\\Desktop\\pdflabels\\Tesseract-OCR\\tesseract.exe"
 
@@ -145,6 +144,7 @@ class PagesModel(QAbstractTableModel):
 
 class PdfPagesPreview(QTableView):
     row_selected = pyqtSignal(int)
+    preview_dpi_changed = pyqtSignal(int)
 
     def __init__(self):
         super().__init__()
@@ -185,6 +185,13 @@ class PdfPagesPreview(QTableView):
     def get_selected_rows(self):
         return [x.row() for x in self.selectionModel().selectedRows() if not self.isRowHidden(x.row())]
 
+    def wheelEvent(self, event: QWheelEvent):
+        if QApplication.keyboardModifiers() == Qt.KeyboardModifier.ControlModifier:
+            self.preview_dpi_changed.emit(1 if event.angleDelta().y() > 0 else -1)
+            event.ignore()
+        else:
+            return super().wheelEvent(event)
+
 
 class VerticalLine(QGraphicsLineItem):
     def __init__(self, parent_item, pos_x) -> None:
@@ -202,15 +209,13 @@ class VerticalLine(QGraphicsLineItem):
         self.setParentItem(parent_item)
         self.setAcceptHoverEvents(True)
 
-    def hoverEnterEvent(self, event: QGraphicsSceneHoverEvent) -> None:
-        self.setCursor(QCursor(Qt.CursorShape.SizeHorCursor))
-        return super().hoverEnterEvent(event)
-
     def keyPressEvent(self, event: QKeyEvent):
         if event.key() == Qt.Key.Key_Left:
             self.moveBy(-1, 0)
         elif event.key() == Qt.Key.Key_Right:
             self.moveBy(1, 0)
+        elif event.key() == Qt.Key.Key_Delete:
+            self.scene().removeItem(self)
         return super().keyPressEvent(event)
 
 
@@ -225,16 +230,32 @@ class PageView(QGraphicsView):
         self.scene.addItem(self.pdf_image)
         self.setBackgroundBrush(Qt.GlobalColor.lightGray)
         self.lines = []
+        self.mouse_click_pos = None
+        self.drag_mode = False
 
     def set_image(self, pixmap):
         self.pdf_image.setPixmap(pixmap)
-        self.fitInView(self.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
+        self.setSceneRect(self.pdf_image.boundingRect())
+
+    def showEvent(self, event: QShowEvent | None) -> None:
+        super().showEvent(event)
+        self.fitInView(self.pdf_image, Qt.AspectRatioMode.KeepAspectRatio)
+
+    def mousePressEvent(self, event: QMouseEvent):
+        self.mouse_click_pos = event.pos()
+        return super().mousePressEvent(event)
 
     def mouseReleaseEvent(self, event: QMouseEvent):
+        self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
+
         x_pos = self.mapToScene(event.pos()).x()
         width = self.sceneRect().width()
         focus_item = self.scene.focusItem()
         if focus_item is None:
+            if self.drag_mode:
+                self.drag_mode = False
+                self.mouse_click_pos = None
+                return
             if x_pos > 0 and x_pos < width:
                 self.add_line(x_pos)
         else:
@@ -243,11 +264,53 @@ class PageView(QGraphicsView):
                 self.lines.pop(self.lines.index(focus_item))
             else:
                 focus_item.setPos(focus_item.pos().x(), 0)
+        self.mouse_click_pos = None
         return super().mouseReleaseEvent(event)
 
+    def mouseMoveEvent(self, event: QMouseEvent | None) -> None:
+        if self.drag_mode:
+            self.setCursor(QCursor(Qt.CursorShape.OpenHandCursor))
+        if isinstance(self.itemAt(event.pos()), VerticalLine):
+            self.setCursor(QCursor(Qt.CursorShape.SizeHorCursor))
+            super().mouseMoveEvent(event)
+        elif self.scene.focusItem() is None:
+            if self.mouse_click_pos is not None:
+                self.drag_mode = True
+                delta = self.mouse_click_pos - event.pos()
+                if self.horizontalScrollBar().isVisible():
+                    self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() + delta.x())
+                if self.verticalScrollBar().isVisible():
+                    self.verticalScrollBar().setValue(self.verticalScrollBar().value() + delta.y())
+                self.mouse_click_pos = event.pos()
+                self.setCursor(QCursor(Qt.CursorShape.OpenHandCursor))
+            else:
+                self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
+        else:
+            super().mouseMoveEvent(event)
+
+    def ensure_fit_in(self):
+        tlp = self.mapFromScene(0, 0)
+        brp = self.mapFromScene(self.sceneRect().size().width(), self.sceneRect().size().height())
+
+        scene_width = brp.x() - tlp.x()
+        scene_height = brp.y() - tlp.y()
+
+        view_width = self.rect().width()
+        view_height = self.rect().height()
+        if scene_height < view_height and scene_width < view_width:
+            self.fitInView(self.pdf_image, Qt.AspectRatioMode.KeepAspectRatio)
+
     def wheelEvent(self, event: QWheelEvent):
-        self.next_page.emit(-1 if event.angleDelta().y() > 0 else 1)
-        return super().wheelEvent(event)
+        if QApplication.keyboardModifiers() == Qt.KeyboardModifier.NoModifier:
+            self.next_page.emit(-1 if event.angleDelta().y() > 0 else 1)
+        elif QApplication.keyboardModifiers() == Qt.KeyboardModifier.ControlModifier:
+            factor = 1.1
+            if event.angleDelta().y() < 0:
+                factor = 0.9
+
+            self.scale(factor, factor)
+            self.ensure_fit_in()
+        # return super().wheelEvent(event)
 
     def restore_lines(self, lines):
         for x in lines:
@@ -259,8 +322,7 @@ class PageView(QGraphicsView):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self.setSceneRect(self.pdf_image.boundingRect())
-        self.fitInView(self.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
+        self.ensure_fit_in()
 
     def get_lines(self):
         return sorted([x.pos().toPoint().x() for x in self.lines])
@@ -297,6 +359,7 @@ class Q2PdfWidget(QWidget):
         self._pdf_file = None
         self.main_layout.addWidget(self.pages_view, stretch=0)
         self.main_layout.addWidget(self.page_view, stretch=99)
+        self.pages_view.preview_dpi_changed.connect(self.preview_dpi_changed)
 
     @property
     def preview_dpi(self):
@@ -304,8 +367,13 @@ class Q2PdfWidget(QWidget):
 
     @preview_dpi.setter
     def preview_dpi(self, value):
+        if value <= 5 or value >= 50:
+            return
         self._preview_dpi = value
         self.refresh_pages_view()
+
+    def preview_dpi_changed(self, value):
+        self.preview_dpi += value
 
     @property
     def pdf_file(self):
@@ -316,6 +384,7 @@ class Q2PdfWidget(QWidget):
         self._pdf_file = value
         self.pdf = fitz.open(self._pdf_file)
         self.refresh_pages_view()
+        self.pages_view.set_page(0)
 
     def refresh_pages_view(self):
         for page in self.pdf.pages():
@@ -326,9 +395,13 @@ class Q2PdfWidget(QWidget):
             painter.setFont(font)
             painter.drawText(QRectF(pix.rect()), Qt.AlignmentFlag.AlignCenter, f"{page.number + 1}")
             self.pdf_pages[page.number] = {"number": page.number, "preview": pix, "page": page}
+        previous_row = self.pages_view.currentIndex().row()
         self.pages_model.refresh()
         self.pages_view.resize_to_content()
-        self.pages_view.set_page(0)
+        if previous_row >= 0 and previous_row < self.pages_model.rowCount() - 1:
+            self.pages_view.set_page(previous_row)
+        else:
+            self.pages_view.set_page(0)
 
     def preview_page_changed(self, row):
         if row < 0:
@@ -348,7 +421,7 @@ class Q2PdfWidget(QWidget):
     def get_lines(self):
         return self.page_view.get_lines()
 
-    def get_ocr_steps(self,page_numbers=None):
+    def get_ocr_steps(self, page_numbers=None):
         if page_numbers is None:
             page_numbers = self.pages_view.get_selected_rows()
         if not isinstance(page_numbers, list):
@@ -440,13 +513,13 @@ if __name__ == "__main__":
     widget = Q2PdfWidget()
     widget.pdf_file = "data/Scannen0001.pdf"
     widget.restore_lines([364, 1416, 1602, 1808, 2117])
-    widget.show()
     widget.preview_dpi = 10
     widget.resize(1000, 1000)
     widget.move(100, 100)
+    widget.show()
     app.exec()
     # print(widget.get_lines())
-    print(widget.ocr())
+    # print(widget.ocr())
 
     # print(widget.get_ocr_steps())
     sys.exit(0)
