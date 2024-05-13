@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (
     QGraphicsLineItem,
     QGraphicsDropShadowEffect,
     QSpinBox,
+    QDoubleSpinBox,
     QFileDialog,
     QToolButton,
     QApplication,
@@ -297,15 +298,16 @@ class Q2PdfWidget(QWidget):
     CSV_FILE = 1
     JSON_DATA = 2
 
-    def __init__(self, ocr_progress_callback=None, result_mode=CSV_FILE):
+    def __init__(self, ocr_progress_callback=None, result_mode=CSV_FILE, dpi=300):
         super().__init__()
 
         self._preview_dpi = 10
         self._pdf_file = None
         self.aec = 0
+        self.dpi = dpi
 
         self._base_column = 1
-        self._string_delta = 58
+        self._row_margin = 0.5
         self.result_mode = result_mode
 
         self._ocr_progress_callback = ocr_progress_callback
@@ -317,7 +319,9 @@ class Q2PdfWidget(QWidget):
         self.toolbar_frame = self.get_toolbar()
         self.doc_frame = self.get_frame()
 
-        self.q2ocr = q2ocr.Q2OCR(progress_callback=self.ocr_progress_tick)
+        self.q2ocr = q2ocr.Q2OCR(
+            progress_callback=self.ocr_progress_tick, result_mode=self.result_mode, dpi=self.dpi
+        )
 
         self.main_layout = QVBoxLayout()
         self.main_layout.setContentsMargins(0, 0, 0, 0)
@@ -371,13 +375,14 @@ class Q2PdfWidget(QWidget):
 
         self.base_column_spin.valueChanged.connect(base_column_changed)
 
-        self.string_delta_spin = QSpinBox()
-        self.string_delta_spin.setValue(self.string_delta)
+        self.row_margin_spin = QDoubleSpinBox()
+        self.row_margin_spin.setSingleStep(0.01)
+        self.row_margin_spin.setValue(self.row_margin)
 
-        def string_delta_changed(value):
-            self.string_delta = value
+        def row_margin_changed(value):
+            self.row_margin = value
 
-        self.string_delta_spin.valueChanged.connect(string_delta_changed)
+        self.row_margin_spin.valueChanged.connect(row_margin_changed)
 
         self.empty_cells_spin = QSpinBox()
         self.empty_cells_spin.setValue(self.aec)
@@ -406,7 +411,7 @@ class Q2PdfWidget(QWidget):
         toolbar_frame.layout().addWidget(QLabel("Base column"))
         toolbar_frame.layout().addWidget(self.base_column_spin)
         toolbar_frame.layout().addWidget(QLabel("String delta"))
-        toolbar_frame.layout().addWidget(self.string_delta_spin)
+        toolbar_frame.layout().addWidget(self.row_margin_spin)
         toolbar_frame.layout().addWidget(QLabel("SEC:"))
         toolbar_frame.layout().addWidget(self.empty_cells_spin)
         toolbar_frame.layout().addWidget(QLabel("OCR:"))
@@ -458,13 +463,13 @@ class Q2PdfWidget(QWidget):
         self.base_column_spin.setValue(value)
 
     @property
-    def string_delta(self):
-        return self._string_delta
+    def row_margin(self):
+        return self._row_margin
 
-    @string_delta.setter
-    def string_delta(self, value):
-        self._string_delta = value
-        self.string_delta_spin.setValue(value)
+    @row_margin.setter
+    def row_margin(self, value):
+        self._row_margin = value
+        self.row_margin_spin.setValue(value)
 
     def refresh_pages_view(self):
         self.preview_pages.clear()
@@ -531,9 +536,9 @@ class Q2PdfWidget(QWidget):
             page_numbers,
             self.get_lines(),
             base_column=self.base_column,
-            string_delta=self.string_delta,
+            row_margin=self.row_margin,
             aec=self.aec,
-            debug=debug,
+            debug=True,
         )
         self.ocr_job_done.emit(self.result_data)
         open_document(self.result_data)
@@ -542,7 +547,7 @@ class Q2PdfWidget(QWidget):
 
 if __name__ == "__main__":
     app = QApplication([])
-    ocr_widget = Q2PdfWidget()
+    ocr_widget = Q2PdfWidget(dpi=600)
     ocr_widget.pdf_file = "data/Scannen0003.pdf"
     ocr_widget.set_tesseract_cmd("C:\\Users\\andre\\Desktop\\pdflabels\\Tesseract-OCR\\tesseract.exe")
     ocr_widget.restore_lines([3.1242, 12.2936, 13.656733, 15.206133, 17.873133])
@@ -552,6 +557,7 @@ if __name__ == "__main__":
     ocr_widget.move(100, 100)
     ocr_widget.show()
     app.exec()
+    print(ocr_widget.result_data)
     if ocr_widget.result_data:
         open_document(ocr_widget.result_data)
     sys.exit(0)

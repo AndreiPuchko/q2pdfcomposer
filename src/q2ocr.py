@@ -47,7 +47,7 @@ class Q2OCR:
 
     def validate_page_numbers(self, page_numbers=None):
         if page_numbers is None:
-            page_numbers = [p for p in self.pdf.page_count()]
+            page_numbers = [p for p in range(self.pdf.page_count)]
         if not isinstance(page_numbers, list):
             page_numbers = [int(page_numbers)]
         page_numbers = [p for p in page_numbers if p >= 0 and p < self.pdf.page_count]
@@ -66,9 +66,8 @@ class Q2OCR:
         else:
             print(arg1, arg2)
 
-    def extract_rows_from_chunk_data(self, data, string_delta):
+    def extract_rows_from_chunk_data(self, data, row_margin):
         res = []
-
         row_count = len(data["level"])
 
         # for key, value in data.items():
@@ -81,7 +80,7 @@ class Q2OCR:
                 continue
             if data["top"][row] < _last_top:
                 continue
-            if data["top"][row] - _last_top > string_delta:
+            if data["top"][row] - _last_top > row_margin:
                 res.append({"text": _text.strip(), "top": _top, "bottom": _bottom})
                 _text = ""
                 _top = 999999999999
@@ -92,16 +91,14 @@ class Q2OCR:
                 _bottom = max(data["top"][row] + data["height"][row], _bottom)
                 _last_top = data["top"][row]
         res.append({"text": _text.strip(), "top": _top, "bottom": _bottom})
-        # for x in res:
-        #     print(x['top'], x["text"][:100])
         return res
 
-    def json_ocr(self, data, base_column=1, string_delta=59, aec=0):
+    def json_ocr(self, data, base_column=1, row_margin=0.5, aec=0):
         grand_result = []
         for page in data:
             page_result = []
             for chunk in page:
-                page_result.append(self.extract_rows_from_chunk_data(chunk, string_delta))
+                page_result.append(self.extract_rows_from_chunk_data(chunk, row_margin))
             for main_column_row in page_result[base_column - 1]:
                 for index, other_column in enumerate(page_result):
                     if index == base_column - 1:
@@ -122,7 +119,7 @@ class Q2OCR:
                 grand_result.append(row)
         return grand_result
 
-    def ocr(self, page_numbers, lines=[], base_column=1, string_delta=58, aec=0, debug=True):
+    def ocr(self, page_numbers=None, lines=[], base_column=1, row_margin=0.5, aec=0, debug=True):
         stripes = [(x, lines[index + 1]) for index, x in enumerate(lines[:-1])]
 
         page_numbers = self.validate_page_numbers(page_numbers)
@@ -164,8 +161,11 @@ class Q2OCR:
                 if debug:
                     ocr_csv_text = str(pytesseract.image_to_data(im.open(io.BytesIO(bytes_pixmap))))
                     chunk["csv"] = ocr_csv_text
+                    open(f"{debug_file_name}.csv", "w").write(ocr_csv_text)
 
-        table = self.json_ocr(result, base_column=base_column, string_delta=string_delta, aec=aec)
+        table = self.json_ocr(
+            result, base_column=base_column, row_margin=row_margin / INCH * self.dpi, aec=aec
+        )
         self.debug_data = debug_data
 
         if self.result_mode == self.CSV_FILE:
@@ -191,3 +191,11 @@ class Q2OCR:
             csv_writer.writerow(x)
         csv_writer = None
         return result_csv_file_name
+
+
+if __name__ == "__main__":
+    ocr = Q2OCR()
+    ocr.pdf_file = "data/Scannen0003.pdf"
+    ocr.set_tesseract_cmd("C:\\Users\\andre\\Desktop\\pdflabels\\Tesseract-OCR\\tesseract.exe")
+    ocr.dpi = 300
+    ocr.ocr(0, lines=[3.1242, 12.2936, 13.656733, 15.206133, 17.873133], row_margin=0.5, aec=99)

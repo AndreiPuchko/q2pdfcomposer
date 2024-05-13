@@ -24,7 +24,7 @@ class Q2PdfComposer(Q2Form):
         self.ocr_widget.set_tesseract_cmd("C:\\Users\\andre\\Desktop\\pdflabels\\Tesseract-OCR\\tesseract.exe")
         self.ocr_widget.pdf_file = pdf_file
         self.ocr_widget.base_column = int(q2app.q2_app.settings.get("pdf_composer", "base_column", "1"))
-        self.ocr_widget.string_delta = int(q2app.q2_app.settings.get("pdf_composer", "string_delta", "59"))
+        self.ocr_widget.row_margin = float(q2app.q2_app.settings.get("pdf_composer", "row_margin", "0.5"))
         self.ocr_widget.restore_lines(
             json.loads(q2app.q2_app.settings.get("pdf_composer", "lines", "[2, 4]"))
         )
@@ -50,7 +50,7 @@ class Q2PdfComposer(Q2Form):
     def after_form_closed(self):
         self.q2_app.settings.set("pdf_composer", "lines", f"{self.ocr_widget.get_lines()}")
         self.q2_app.settings.set("pdf_composer", "base_column", f"{self.ocr_widget.base_column}")
-        self.q2_app.settings.set("pdf_composer", "string_delta", f"{self.ocr_widget.string_delta}")
+        self.q2_app.settings.set("pdf_composer", "row_margin", f"{self.ocr_widget.row_margin}")
         return super().after_form_closed()
 
 
