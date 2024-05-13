@@ -5,6 +5,7 @@ from PIL import Image as im
 import io
 import csv
 import os
+import subprocess
 
 
 from PyQt6.QtWidgets import (
@@ -41,76 +42,217 @@ from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex, QVariant, pyqtSig
 
 pytesseract.pytesseract.tesseract_cmd = "C:\\Users\\andre\\Desktop\\pdflabels\\Tesseract-OCR\\tesseract.exe"
 
-
-def extract_rows_from_chunk_data(data, string_delta):
-    res = []
-
-    row_count = len(data["level"])
-
-    # for key, value in data.items():
-    _text = ""
-    _top = 999999999999
-    _bottom = 0
-    _last_top = 0
-    for row in range(row_count):
-        if data["level"][row] != 5:
-            continue
-        if data["top"][row] < _last_top:
-            continue
-        if data["top"][row] - _last_top > string_delta:
-            res.append({"text": _text.strip(), "top": _top, "bottom": _bottom})
-            _text = ""
-            _top = 999999999999
-            _bottom = 0
-        if len(data["text"][row]) > 1:
-            _text += " " + data["text"][row]
-            _top = min(data["top"][row], _top)
-            _bottom = max(data["top"][row] + data["height"][row], _bottom)
-            _last_top = data["top"][row]
-    res.append({"text": _text.strip(), "top": _top, "bottom": _bottom})
-    # for x in res:
-    #     print(x['top'], x["text"][:100])
-    return res
+INCH = 2.54
 
 
-def json_ocr(data, base_column=1, string_delta=59):
-    grand_result = []
-    for page in data:
-        page_result = []
-        for chunk in page:
-            page_result.append(extract_rows_from_chunk_data(chunk, string_delta))
-        for main_column_row in page_result[base_column - 1]:
-            for index, other_column in enumerate(page_result):
-                if index == base_column - 1:
-                    continue
-                for other_column_row in other_column:
-                    if (
-                        other_column_row["top"] >= main_column_row["top"]
-                        and other_column_row["top"] <= main_column_row["bottom"]
-                    ):
-                        main_column_row[f"other_column_{index}"] = other_column_row["text"]
-                    if f"other_column_{index}" not in main_column_row:
-                        main_column_row[f"other_column_{index}"] = ""
-            del main_column_row["bottom"]
-            del main_column_row["top"]
-        for row in page_result[base_column - 1]:
-            # if len([1 for x in row.values() if len(x.strip())==0]) <= 1:
-            grand_result.append(row)
-    return grand_result
+def open_document(folder):
+    if "win32" in sys.platform:
+        os.startfile(folder)
+    elif "darwin" in sys.platform:
+        subprocess.Popen(["open", folder])
+    else:
+        subprocess.Popen(["xdg-open", folder])
 
 
 class Q2OCR:
-    def __init__(self):
-        pass
+    CSV_FILE = 1
+    JSON_DATA = 2
+
+    def __init__(self, dpi=300, progress_callback=None, result_mode=CSV_FILE):
+        self._pdf_file = None
+        self.pdf = None
+        self.dpi = dpi
+        self.result_data = None
+        self.progress_callback = progress_callback
+        self.result_mode = result_mode
+
+    @property
+    def pdf_file(self):
+        return self._pdf_file
+
+    @pdf_file.setter
+    def pdf_file(self, value):
+        self._pdf_file = value
+        self.pdf = fitz.open(value)
+        self.result_data = None
+
+    def pages(self):
+        return self.pdf.pages()
+
+    def get_page_image(self, page_number, dpi=None):
+        if dpi is None:
+            dpi = self.dpi
+        pixmap = self.pdf[page_number].get_pixmap(dpi=dpi, alpha=False)
+        image = QImage(
+            pixmap.samples_ptr, pixmap.width, pixmap.height, pixmap.stride, QImage.Format.Format_RGB888
+        )
+        return QPixmap.fromImage(image)
+
+    def validate_page_numbers(self, page_numbers=None):
+        if page_numbers is None:
+            page_numbers = [p for p in self.pdf.page_count()]
+        if not isinstance(page_numbers, list):
+            page_numbers = [int(page_numbers)]
+        page_numbers = [p for p in page_numbers if p >= 0 and p < self.pdf.page_count]
+        return page_numbers
+
+    def get_preview_pages(self, preview_dpi):
+        preview_pages = {}
+        for page in self.pdf.pages():
+            pix = self.get_page_image(page.number, preview_dpi)
+            painter = QPainter(pix)
+            font = painter.font()
+            font.setPointSize(preview_dpi)
+            painter.setFont(font)
+            painter.drawText(QRectF(pix.rect()), Qt.AlignmentFlag.AlignCenter, f"{page.number + 1}")
+            preview_pages[page.number] = pix
+        return preview_pages
+
+    def get_boxes(self):
+        boxes = []
+        for x in range(len(lines) - 1):
+            boxes.append([lines[x], 0, lines[x + 1], int(self.pdf_image.boundingRect().height())])
+        return boxes
+
+    def ocr_progress_tick(self, arg1=None, arg2=None):
+        if self.progress_callback is not None:
+            self.progress_callback(arg1, arg2)
+        else:
+            print(arg1, arg2)
+
+    def extract_rows_from_chunk_data(self, data, string_delta):
+        res = []
+
+        row_count = len(data["level"])
+
+        # for key, value in data.items():
+        _text = ""
+        _top = 999999999999
+        _bottom = 0
+        _last_top = 0
+        for row in range(row_count):
+            if data["level"][row] != 5:
+                continue
+            if data["top"][row] < _last_top:
+                continue
+            if data["top"][row] - _last_top > string_delta:
+                res.append({"text": _text.strip(), "top": _top, "bottom": _bottom})
+                _text = ""
+                _top = 999999999999
+                _bottom = 0
+            if len(data["text"][row]) > 1:
+                _text += " " + data["text"][row]
+                _top = min(data["top"][row], _top)
+                _bottom = max(data["top"][row] + data["height"][row], _bottom)
+                _last_top = data["top"][row]
+        res.append({"text": _text.strip(), "top": _top, "bottom": _bottom})
+        # for x in res:
+        #     print(x['top'], x["text"][:100])
+        return res
+
+    def json_ocr(self, data, base_column=1, string_delta=59):
+        grand_result = []
+        for page in data:
+            page_result = []
+            for chunk in page:
+                page_result.append(self.extract_rows_from_chunk_data(chunk, string_delta))
+            for main_column_row in page_result[base_column - 1]:
+                for index, other_column in enumerate(page_result):
+                    if index == base_column - 1:
+                        continue
+                    for other_column_row in other_column:
+                        if (
+                            other_column_row["top"] >= main_column_row["top"]
+                            and other_column_row["top"] <= main_column_row["bottom"]
+                        ):
+                            main_column_row[f"other_column_{index}"] = other_column_row["text"]
+                        if f"other_column_{index}" not in main_column_row:
+                            main_column_row[f"other_column_{index}"] = ""
+                del main_column_row["bottom"]
+                del main_column_row["top"]
+            for row in page_result[base_column - 1]:
+                # if len([1 for x in row.values() if len(x.strip())==0]) <= 1:
+                grand_result.append(row)
+        return grand_result
+
+    def ocr(self, page_numbers, lines=[], base_column=1, string_delta=58, debug=True):
+        stripes = [(x, lines[index + 1]) for index, x in enumerate(lines[:-1])]
+
+        page_numbers = self.validate_page_numbers(page_numbers)
+        steps_count = len(page_numbers) * len(stripes)
+        result = []
+        debug_data = []
+        count = 0
+        self.ocr_progress_tick("start", steps_count)
+        for page in self.pdf.pages():
+            if page.number not in page_numbers:
+                continue
+            result.append([])
+            for index, stripe_x0_x1 in enumerate(stripes):
+                count += 1
+                self.ocr_progress_tick(count, steps_count)
+                debug_data.append([])
+                chunk = {}
+
+                # print("\tchunk", index)
+                debug_file_name = f"temp\\chunk-{index}-page-{page.number}"
+                chunk["debug_file_name"] = debug_file_name
+
+                clip = (stripe_x0_x1[0] / INCH * 72, 0, stripe_x0_x1[1] / INCH * 72, page.rect.height)
+                pixmap = page.get_pixmap(
+                    dpi=self.dpi, alpha=False, colorspace=fitz.Colorspace(fitz.CS_GRAY), clip=clip
+                )
+                if debug:
+                    pixmap.save(f"{debug_file_name}.png")
+                bytes_pixmap = pixmap.tobytes(output="png")
+                chunk["pixmap"] = bytes_pixmap
+
+                chunk_data = pytesseract.image_to_data(
+                    im.open(io.BytesIO(bytes_pixmap)), output_type=pytesseract.Output.DICT
+                )
+                result[-1].append(chunk_data)
+                chunk["data"] = chunk_data
+                debug_data[-1].append(chunk)
+
+                if debug:
+                    ocr_csv_text = str(pytesseract.image_to_data(im.open(io.BytesIO(bytes_pixmap))))
+                    chunk["csv"] = ocr_csv_text
+
+        table = self.json_ocr(result, base_column=base_column, string_delta=string_delta)
+        self.debug_data = debug_data
+
+        if self.result_mode == self.CSV_FILE:
+            self.result_data = self.save_csv(table)
+        else:
+            self.result_data = table
+
+        self.ocr_progress_tick("finish", self.result_data)
+
+        return self.result_data
+
+    def save_csv(self, table):
+        result_csv_file_name = "temp\\data.csv"
+        csv_writer = csv.DictWriter(
+            open(result_csv_file_name, "w", encoding="utf-8"),
+            [x for x in table[0]],
+            dialect="excel",
+            lineterminator="\n",
+            delimiter=";",
+        )
+        csv_writer.writeheader()
+        for x in table:
+            csv_writer.writerow(x)
+        csv_writer = None
+        return result_csv_file_name
 
 
 class PagesModel(QAbstractTableModel):
-    def __init__(self, pdf_pages):
+    def __init__(self, preview_pages):
         super().__init__()
-        self.pdf_pages = pdf_pages
+        self.preview_pages = preview_pages
 
     def rowCount(self, parent=None):
-        return len(self.pdf_pages)
+        return len(self.preview_pages)
 
     def columnCount(self, parent=None):
         return 1
@@ -123,10 +265,10 @@ class PagesModel(QAbstractTableModel):
             return Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom
         if role == Qt.ItemDataRole.DecorationRole:
             if index.column() == 0:
-                return self.pdf_pages[index.row()]["preview"]
+                return self.preview_pages[index.row()]
         elif role == Qt.ItemDataRole.SizeHintRole:
             if index.column() == 0:
-                return self.pdf_pages[index.row()]["preview"].size()
+                return self.preview_pages[index.row()].size()
         return QVariant()
 
     def refresh(self):
@@ -229,13 +371,14 @@ class VerticalLine(QGraphicsLineItem):
 class PageView(QGraphicsView):
     next_page = pyqtSignal(int)
 
-    def __init__(self):
+    def __init__(self, dpi):
         super().__init__()
         self.scene: QGraphicsScene = QGraphicsScene()
         self.setScene(self.scene)
         self.pdf_image = QGraphicsPixmapItem()
         self.scene.addItem(self.pdf_image)
         self.setBackgroundBrush(Qt.GlobalColor.lightGray)
+        self.dpi = dpi
         self.lines = []
         self.mouse_click_pos = None
         self.drag_mode = False
@@ -257,17 +400,17 @@ class PageView(QGraphicsView):
         super().mouseReleaseEvent(event)
 
         x_pos = self.mapToScene(event.pos()).x()
-        width = self.sceneRect().width()
+        scene_width = self.sceneRect().width()
         focus_item = self.scene.focusItem()
         if focus_item is None:
             if self.drag_mode:
                 self.drag_mode = False
                 self.mouse_click_pos = None
                 return
-            if x_pos > 0 and x_pos < width:
+            if x_pos > 0 and x_pos < scene_width:
                 self.add_line(x_pos)
         else:
-            if x_pos < 0 or x_pos > width:
+            if x_pos < 0 or x_pos > scene_width:
                 self.scene.removeItem(focus_item)
                 self.lines.pop(self.lines.index(focus_item))
                 self.clearFocus()
@@ -328,26 +471,23 @@ class PageView(QGraphicsView):
             self.scale(factor, factor)
             self.ensure_minimal_zoom()
 
-    def restore_lines(self, lines):
-        for x in lines:
-            self.add_line(x)
-
-    def add_line(self, pos_x):
-        self.lines.append(VerticalLine(self.pdf_image, pos_x))
-
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self.ensure_minimal_zoom()
 
-    def get_lines(self):
-        return sorted([x.pos().toPoint().x() for x in self.lines])
+    def add_line(self, pos_x):
+        self.lines.append(VerticalLine(self.pdf_image, pos_x))
 
-    def get_boxes(self):
-        lines = self.get_lines()
-        boxes = []
-        for x in range(len(lines) - 1):
-            boxes.append([lines[x], 0, lines[x + 1], int(self.pdf_image.boundingRect().height())])
-        return boxes
+    def restore_lines(self, lines):
+        self.lines.clear()
+        scene_width = self.sceneRect().width()
+        for x in lines:
+            x_pos = int(self.dpi / INCH * x)
+            if x_pos > 0 and x_pos < scene_width:
+                self.add_line(x_pos)
+
+    def get_lines(self):
+        return sorted([round(x.pos().toPoint().x() * INCH / self.dpi, 6) for x in self.lines])
 
 
 class Q2PdfWidget(QWidget):
@@ -363,17 +503,18 @@ class Q2PdfWidget(QWidget):
 
         self._base_column = 1
         self._string_delta = 58
-        self.image_dpi = 300
         self.result_mode = result_mode
 
         self._ocr_progress_callback = ocr_progress_callback
 
-        self.pdf_pages = {}
+        self.preview_pages = {}
         self.debug_data = None
         self.result_data = None
 
         self.toolbar_frame = self.get_toolbar()
         self.doc_frame = self.get_frame()
+
+        self.q2ocr = Q2OCR(progress_callback=self.ocr_progress_tick)
 
         self.main_layout = QVBoxLayout()
         self.main_layout.setContentsMargins(0, 0, 0, 0)
@@ -381,10 +522,10 @@ class Q2PdfWidget(QWidget):
 
         self.pages_view = PdfPagesPreview()
         self.pages_view.row_selected.connect(self.preview_page_changed)
-        self.pages_model = PagesModel(self.pdf_pages)
+        self.pages_model = PagesModel(self.preview_pages)
         self.pages_view.setModel(self.pages_model)
 
-        self.page_view = PageView()
+        self.page_view = PageView(self.q2ocr.dpi)
         self.page_view.next_page.connect(self.pages_view.next_page)
         self.doc_frame.layout().addWidget(self.pages_view, stretch=0)
         self.doc_frame.layout().addWidget(self.page_view, stretch=99)
@@ -408,7 +549,7 @@ class Q2PdfWidget(QWidget):
         return frame
 
     def get_toolbar(self):
-        button_style_sheet = "* {background:silver} *:hover  {background:green; color:white}"
+        button_style_sheet = "* {background:silver} *:hover {background:green; color:white}"
         toolbar_frame = self.get_frame()
         self.open_file_button = QToolButton()
         self.open_file_button.setText("🗁")
@@ -483,7 +624,7 @@ class Q2PdfWidget(QWidget):
     @pdf_file.setter
     def pdf_file(self, value):
         self._pdf_file = value
-        self.pdf = fitz.open(self._pdf_file)
+        self.q2ocr.pdf_file = value
         self.refresh_pages_view()
         self.pages_view.set_page(0)
         self.file_name_label.setText(os.path.abspath(value))
@@ -508,14 +649,8 @@ class Q2PdfWidget(QWidget):
         self.string_delta_spin.setValue(value)
 
     def refresh_pages_view(self):
-        for page in self.pdf.pages():
-            pix = self.get_page_image(page.number, self.preview_dpi)
-            painter = QPainter(pix)
-            font = painter.font()
-            font.setPointSize(self.preview_dpi)
-            painter.setFont(font)
-            painter.drawText(QRectF(pix.rect()), Qt.AlignmentFlag.AlignCenter, f"{page.number + 1}")
-            self.pdf_pages[page.number] = {"number": page.number, "preview": pix, "page": page}
+        self.preview_pages.clear()
+        self.preview_pages.update(self.q2ocr.get_preview_pages(self.preview_dpi))
         previous_row = self.pages_view.currentIndex().row()
         self.pages_model.refresh()
         self.pages_view.resize_to_content()
@@ -527,24 +662,17 @@ class Q2PdfWidget(QWidget):
     def preview_page_changed(self, row):
         if row < 0:
             return
-        self.page_view.set_image(self.get_page_image(row, dpi=self.image_dpi))
+        self.page_view.set_image(self.q2ocr.get_page_image(row))
 
-    def get_page_image(self, page_number, dpi):
-        pixmap = self.pdf[page_number].get_pixmap(dpi=dpi, alpha=False)
-        image = QImage(
-            pixmap.samples_ptr, pixmap.width, pixmap.height, pixmap.stride, QImage.Format.Format_RGB888
-        )
-        return QPixmap.fromImage(image)
-
-    def restore_lines(self, lines_list=[100, 200]):
+    def restore_lines(self, lines_list=[2, 4]):
         self.page_view.restore_lines(lines_list)
 
     def get_lines(self):
         return self.page_view.get_lines()
 
     def get_ocr_steps(self, page_numbers=None):
-        page_numbers = self.validate_page_numbers(page_numbers)
-        return len(page_numbers) * len(self.page_view.get_boxes())
+        page_numbers = self.q2ocr.validate_page_numbers(page_numbers)
+        return len(page_numbers) * len(self.get_lines())
 
     def get_page_count(self):
         return self.pages_view.model().rowCount()
@@ -555,6 +683,8 @@ class Q2PdfWidget(QWidget):
     def ocr_progress_tick(self, arg1=None, arg2=None):
         if self._ocr_progress_callback is not None:
             self._ocr_progress_callback(arg1, arg2)
+        else:
+            print(arg1, arg2)
 
     def ocr_all(self):
         return self.ocr([x for x in range(self.get_page_count())])
@@ -563,97 +693,29 @@ class Q2PdfWidget(QWidget):
         return self.ocr(self.get_selected_pages())
 
     def ocr(self, page_numbers=None, debug=False):
-        boxes = self.page_view.get_boxes()
-        k = self.image_dpi / 72
-
-        page_numbers = self.validate_page_numbers(page_numbers)
-        steps_count = self.get_ocr_steps(page_numbers)
-        result = []
-        debug_data = []
-        count = 0
-        self.ocr_progress_tick("start", steps_count)
-        for page in self.pdf.pages():
-            if page.number not in page_numbers:
-                continue
-            result.append([])
-            for index, x in enumerate(boxes):
-                count += 1
-                self.ocr_progress_tick(count, steps_count)
-                debug_data.append([])
-                chunk = {}
-
-                # print("\tchunk", index)
-                debug_file_name = f"temp\\chunk-{index}-page-{page.number}"
-                chunk["debug_file_name"] = debug_file_name
-
-                clip = (x[0] / k, x[1] / k, x[2] / k, x[3] / k)
-                pixmap = page.get_pixmap(
-                    dpi=self.image_dpi, alpha=False, colorspace=fitz.Colorspace(fitz.CS_GRAY), clip=clip
-                )
-                # if debug:
-                #     pixmap.save(f"{debug_file_name}.png")
-
-                bytes_pixmap = pixmap.tobytes(output="png")
-                chunk["pixmap"] = bytes_pixmap
-
-                chunk_data = pytesseract.image_to_data(
-                    im.open(io.BytesIO(bytes_pixmap)), output_type=pytesseract.Output.DICT
-                )
-                result[-1].append(chunk_data)
-                chunk["data"] = chunk_data
-                debug_data[-1].append(chunk)
-
-                if debug:
-                    ocr_csv_text = str(pytesseract.image_to_data(im.open(io.BytesIO(bytes_pixmap))))
-                    chunk["csv"] = ocr_csv_text
-
-        table = json_ocr(result, base_column=self.base_column, string_delta=self.string_delta)
-        self.debug_data = debug_data
-        if self.result_mode == self.CSV_FILE:
-            self.result_data = self.save_csv(table)
-            self.ocr_job_done.emit(self.result_data)
-        else:
-            self.result_data = table
-            self.ocr_job_done.emit("Done")
-
-        self.ocr_progress_tick("finish", self.result_data)
-
-        return self.result_data
-
-    def validate_page_numbers(self, page_numbers=None):
-        if page_numbers is None:
-            page_numbers = self.pages_view.get_selected_rows()
-        if not isinstance(page_numbers, list):
-            page_numbers = [int(page_numbers)]
-        return page_numbers
-
-    def save_csv(self, table):
-        result_csv_file_name = "temp\\data.csv"
-        csv_writer = csv.DictWriter(
-            open(result_csv_file_name, "w", encoding="utf-8"),
-            [x for x in table[0]],
-            dialect="excel",
-            lineterminator="\n",
-            delimiter=";",
+        self.result_data = self.q2ocr.ocr(
+            page_numbers,
+            self.get_lines(),
+            base_column=self.base_column,
+            string_delta=self.string_delta,
+            debug=debug,
         )
-        csv_writer.writeheader()
-        for x in table:
-            csv_writer.writerow(x)
-        csv_writer = None
-        return result_csv_file_name
-
-        # open_document(result_csv_file_name)
+        self.ocr_job_done.emit(self.result_data)
+        open_document(self.result_data)
+        # self.ocr_job_done.emit("Done")
 
 
 if __name__ == "__main__":
     app = QApplication([])
     ocr_widget = Q2PdfWidget()
-    ocr_widget.pdf_file = "data/Scannen0001.pdf"
-    ocr_widget.restore_lines([364, 1416, 1602, 1808, 2117])
+    ocr_widget.pdf_file = "data/Scannen0003.pdf"
+    ocr_widget.restore_lines([3.1242, 12.2682, 12.2936, 13.656733, 15.206133, 17.873133])
     ocr_widget.preview_dpi = 10
     ocr_widget.ocr_job_done.connect(lambda arg: print(arg, ocr_widget.result_data))
     ocr_widget.resize(1000, 1000)
     ocr_widget.move(100, 100)
     ocr_widget.show()
     app.exec()
+    if ocr_widget.result_data:
+        open_document(ocr_widget.result_data)
     sys.exit(0)

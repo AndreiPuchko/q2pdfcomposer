@@ -25,7 +25,7 @@ class Q2PdfComposer(Q2Form):
         self.ocr_widget.base_column = int(q2app.q2_app.settings.get("pdf_composer", "base_column", "1"))
         self.ocr_widget.string_delta = int(q2app.q2_app.settings.get("pdf_composer", "string_delta", "59"))
         self.ocr_widget.restore_lines(
-            json.loads(q2app.q2_app.settings.get("pdf_composer", "lines", "[100, 500]"))
+            json.loads(q2app.q2_app.settings.get("pdf_composer", "lines", "[2, 4]"))
         )
 
         self.progress_bar = None
@@ -62,7 +62,7 @@ class DemoApp(Q2App):
 
     def on_new_tab(self):
         # form = Q2PdfComposer("data/test1.pdf")
-        form = Q2PdfComposer("data/Scannen0001.pdf")
+        form = Q2PdfComposer("data/Scannen0003.pdf")
         form.run()
         self.close()
 
