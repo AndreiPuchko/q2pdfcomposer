@@ -21,6 +21,7 @@ class Q2PdfComposer(Q2Form):
         self.ocr_widget = q2pdfwidget.Q2PdfWidget(
             self.progress_callback, result_mode=q2pdfwidget.Q2PdfWidget.CSV_FILE
         )
+        self.ocr_widget.set_tesseract_cmd("C:\\Users\\andre\\Desktop\\pdflabels\\Tesseract-OCR\\tesseract.exe")
         self.ocr_widget.pdf_file = pdf_file
         self.ocr_widget.base_column = int(q2app.q2_app.settings.get("pdf_composer", "base_column", "1"))
         self.ocr_widget.string_delta = int(q2app.q2_app.settings.get("pdf_composer", "string_delta", "59"))
