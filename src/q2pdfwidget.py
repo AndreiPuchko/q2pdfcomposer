@@ -1,19 +1,29 @@
 import sys
 import os
-import subprocess
+
+try:
+    import qtpy
+except ModuleNotFoundError as error:
+    if error.name != "qtpy":
+        raise
+    raise ImportError(
+        "QtPy is required to run PDF Composer. Install it with 'python -m pip install QtPy'."
+    ) from error
+if not qtpy.API_NAME:
+    raise ImportError(
+        "QtPy is installed, but no supported Qt binding is available. Install PyQt6 or PySide6."
+    )
+
 import fitz
 
-from PyQt6.QtWidgets import (
+import qtpy.QtCore as QtCore
+from qtpy.QtWidgets import (
     QTableView,
     QAbstractItemView,
     QGraphicsView,
     QGraphicsScene,
-    QGraphicsItem,
     QGraphicsPixmapItem,
-    QGraphicsLineItem,
-    QGraphicsDropShadowEffect,
     QSpinBox,
-    QDoubleSpinBox,
     QFileDialog,
     QMessageBox,
     QToolButton,
@@ -24,23 +34,20 @@ from PyQt6.QtWidgets import (
     QWidget,
     QLabel,
 )
-from PyQt6.QtGui import (
-    QFocusEvent,
+from qtpy.QtGui import (
     QKeyEvent,
-    QMouseEvent,
     QPixmap,
     QImage,
-    QPen,
     QCursor,
     QShowEvent,
     QWheelEvent,
     QPainter,
     QColor,
-    QFont,
     QIcon,
 )
-from PyQt6.QtSvg import QSvgRenderer
-from PyQt6.QtCore import (
+from qtpy.QtSvg import QSvgRenderer
+
+from qtpy.QtCore import (
     Qt,
     QAbstractTableModel,
     QByteArray,
@@ -50,8 +57,9 @@ from PyQt6.QtCore import (
     QVariant,
     QRectF,
     QSize,
-    pyqtSignal,
 )
+
+Signal = getattr(QtCore, "Signal")
 
 
 class ComposerToolButton(QToolButton):
@@ -102,8 +110,8 @@ class ComposerToolButton(QToolButton):
 
 
 class PagesModel(QAbstractTableModel):
-    rows_reordered = pyqtSignal(int, int)
-    source_pages_dropped = pyqtSignal(list, int)
+    rows_reordered = Signal(int, int)
+    source_pages_dropped = Signal(list, int)
     PAGE_ROW_MIME_TYPE = "application/x-pdf-composer-page-row"
     SOURCE_PAGES_MIME_TYPE = "application/x-pdf-composer-source-pages"
     THUMBNAIL_SPACING = 5
@@ -252,11 +260,11 @@ class PagesModel(QAbstractTableModel):
 
 
 class PdfPagesPreview(QTableView):
-    row_selected = pyqtSignal(int)
-    preview_dpi_changed = pyqtSignal(int)
-    content_width_changed = pyqtSignal(int)
-    add_page_requested = pyqtSignal()
-    remove_page_requested = pyqtSignal()
+    row_selected = Signal(int)
+    preview_dpi_changed = Signal(int)
+    content_width_changed = Signal(int)
+    add_page_requested = Signal()
+    remove_page_requested = Signal()
 
     def __init__(self):
         super().__init__()
@@ -329,8 +337,8 @@ class PdfPagesPreview(QTableView):
 
 
 class PageView(QGraphicsView):
-    next_page = pyqtSignal(int)
-    add_current_page = pyqtSignal()
+    next_page = Signal(int)
+    add_current_page = Signal()
 
     def __init__(self, dpi):
         super().__init__()
@@ -570,6 +578,7 @@ class Q2PdfWidget(QWidget):
         buttons_layout.addWidget(self.add_page_button)
         buttons_layout.addWidget(self.remove_page_button)
         buttons_layout.addWidget(self.save_result_button)
+        buttons_layout.addStretch(1)
 
         page_navigation_frame = QWidget()
         page_navigation_layout = QHBoxLayout(page_navigation_frame)
@@ -656,11 +665,7 @@ class Q2PdfWidget(QWidget):
     def eventFilter(self, watched, event):
         if event.type() in (QEvent.Type.DragEnter, QEvent.Type.DragMove):
             if self.dropped_pdf_path(event.mimeData()):
-                tooltip = (
-                    "Open and add all pages"
-                    if self.is_composed_pages_drop_target(watched)
-                    else "Open"
-                )
+                tooltip = "Open and add all pages" if self.is_composed_pages_drop_target(watched) else "Open"
                 QToolTip.showText(QCursor.pos(), tooltip, self)
                 event.acceptProposedAction()
                 return True
@@ -968,9 +973,7 @@ class Q2PdfWidget(QWidget):
         selected_rows = sorted(set(self.composed_pages_view.get_selected_rows()))
         if not selected_rows and self._preview_row is not None:
             selected_rows = [self._preview_row]
-        selected_rows = [
-            row for row in selected_rows if 0 <= row < self.composed_pdf.page_count
-        ]
+        selected_rows = [row for row in selected_rows if 0 <= row < self.composed_pdf.page_count]
         if not selected_rows:
             return
 
@@ -1046,8 +1049,7 @@ class Q2PdfWidget(QWidget):
             )
         self.save_result_button.setEnabled(True)
         self.composed_preview_pages[:] = [
-            self.create_composed_preview(page_number)
-            for page_number in range(self.composed_pdf.page_count)
+            self.create_composed_preview(page_number) for page_number in range(self.composed_pdf.page_count)
         ]
         self.composed_pages_model.refresh()
         self.resize_composed_pages_view()
