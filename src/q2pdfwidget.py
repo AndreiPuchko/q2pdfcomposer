@@ -224,10 +224,7 @@ class PageView(QGraphicsView):
 
 class Q2PdfWidget(QWidget):
     ocr_job_done = pyqtSignal(str)
-    CSV_FILE = 1
-    JSON_DATA = 2
-
-    def __init__(self, ocr_progress_callback=None, result_mode=CSV_FILE, dpi=300):
+    def __init__(self, ocr_progress_callback=None, dpi=300):
         super().__init__()
 
         self._preview_dpi = 15
@@ -237,13 +234,14 @@ class Q2PdfWidget(QWidget):
 
         self._base_column = 1
         self._row_margin = 0.5
-        self.result_mode = result_mode
 
         self._ocr_progress_callback = ocr_progress_callback
 
         self.preview_pages = {}
         self.composed_preview_pages = []
         self.composed_pdf = fitz.open()
+        self._previewing_result = False
+        self._preview_row = None
         self.debug_data = None
         self.result_data = None
 
@@ -253,7 +251,7 @@ class Q2PdfWidget(QWidget):
         doc_layout.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignCenter)
         doc_layout.setContentsMargins(1, 1, 1, 1)
 
-        self.q2ocr = q2ocr.Q2OCR(result_mode=self.result_mode, dpi=self.dpi)
+        self.q2ocr = q2ocr.Q2OCR(dpi=self.dpi)
 
         self.main_layout = QVBoxLayout()
         self.main_layout.setContentsMargins(0, 0, 0, 0)
@@ -263,15 +261,21 @@ class Q2PdfWidget(QWidget):
         self.pages_view.row_selected.connect(self.preview_page_changed)
         self.pages_model = PagesModel(self.preview_pages)
         self.pages_view.setModel(self.pages_model)
+        self.pages_view.clicked.connect(lambda index: self.preview_page_changed(index.row()))
 
         self.composed_pages_view = PdfPagesPreview()
+        self.composed_pages_view.row_selected.connect(self.preview_composed_page_changed)
         self.composed_pages_model = PagesModel(self.composed_preview_pages)
         self.composed_pages_view.setModel(self.composed_pages_model)
+        self.composed_pages_view.clicked.connect(
+            lambda index: self.preview_composed_page_changed(index.row())
+        )
         self.composed_page_count_label = QLabel("Result PDF")
 
         self.page_view = PageView(self.q2ocr.dpi)
-        self.page_view.next_page.connect(self.pages_view.next_page)
+        self.page_view.next_page.connect(self.next_preview_page)
 
+        self.preview_source_label = QLabel("Preview")
         self.add_page_button = QToolButton()
         self.add_page_button.setText("Add page")
         self.add_page_button.setEnabled(False)
@@ -298,6 +302,7 @@ class Q2PdfWidget(QWidget):
         preview_layout = QVBoxLayout(preview_frame)
         preview_layout.setContentsMargins(1, 1, 1, 1)
         preview_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        preview_layout.addWidget(self.preview_source_label)
         preview_layout.addWidget(self.page_view, stretch=1)
         preview_layout.addWidget(self.add_page_button)
 
@@ -307,12 +312,6 @@ class Q2PdfWidget(QWidget):
         self.main_layout.addWidget(self.toolbar_frame)
         self.main_layout.addWidget(self.doc_frame)
         self.pages_view.preview_dpi_changed.connect(self.preview_dpi_changed)
-
-    def set_tesseract_cmd(self, cmd):
-        self.q2ocr.set_tesseract_cmd(cmd)
-
-    def set_result_mode(self, result_mode):
-        self.result_mode = result_mode
 
     def get_frame(self, orientation=Qt.Orientation.Horizontal):
         frame = QWidget()
@@ -392,6 +391,8 @@ class Q2PdfWidget(QWidget):
     @pdf_file.setter
     def pdf_file(self, value):
         self._pdf_file = value
+        self._previewing_result = False
+        self._preview_row = None
         self.q2ocr.pdf_file = value
         self.refresh_pages_view()
         self.pages_view.set_page(0)
@@ -440,14 +441,53 @@ class Q2PdfWidget(QWidget):
             self.pages_view.set_page(0)
 
     def preview_page_changed(self, row):
-        if row < 0:
+        if row < 0 or self.q2ocr.pdf is None or row >= self.q2ocr.pdf.page_count:
             return
+        if not self._previewing_result and self._preview_row == row:
+            return
+        self._previewing_result = False
+        self._preview_row = row
+        self.add_page_button.setEnabled(True)
+        self.composed_pages_view.clearSelection()
+        self.preview_source_label.setText(
+            f"Source PDF — page {row + 1} of {self.q2ocr.pdf.page_count}"
+        )
         self.page_view.set_image(self.q2ocr.get_page_image(row, QImage=QImage, QPixmap=QPixmap))
         # image = QImage()
         # image.loadFromData(self.q2ocr.get_page_image(row))
         # self.page_view.set_image(QPixmap.fromImage(image))
 
+    def preview_composed_page_changed(self, row):
+        if row < 0 or row >= self.composed_pdf.page_count:
+            return
+        if self._previewing_result and self._preview_row == row:
+            return
+        self._previewing_result = True
+        self._preview_row = row
+        self.add_page_button.setEnabled(False)
+        self.pages_view.clearSelection()
+        self.preview_source_label.setText(
+            f"Result PDF — page {row + 1} of {self.composed_pdf.page_count}"
+        )
+        self.page_view.set_image(
+            self.q2ocr.get_page_image(
+                row,
+                dpi=self.dpi,
+                QImage=QImage,
+                QPixmap=QPixmap,
+                document=self.composed_pdf,
+            )
+        )
+
+    def next_preview_page(self, page):
+        if self._previewing_result:
+            self.composed_pages_view.next_page(page)
+        else:
+            self.pages_view.next_page(page)
+
     def add_current_page(self):
+        if self._previewing_result:
+            return
         row = self.pages_view.currentIndex().row()
         if self.q2ocr.pdf is None or row < 0 or row >= self.q2ocr.pdf.page_count:
             return
