@@ -1,6 +1,7 @@
 import sys
 import os
 import subprocess
+import fitz
 import q2ocr
 
 from PyQt6.QtWidgets import (
@@ -35,7 +36,6 @@ from PyQt6.QtGui import (
     QPainter,
 )
 from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex, QVariant, QRectF, pyqtSignal
-
 
 INCH = 2.54
 
@@ -194,63 +194,6 @@ class PageView(QGraphicsView):
         super().showEvent(event)
         self.fitInView(self.pdf_image, Qt.AspectRatioMode.KeepAspectRatio)
 
-    def mousePressEvent(self, event: QMouseEvent):
-        super().mousePressEvent(event)
-        self.mouse_click_pos = event.pos()
-
-    def mouseReleaseEvent(self, event: QMouseEvent):
-        self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
-        super().mouseReleaseEvent(event)
-
-        x_pos = self.mapToScene(event.pos()).x()
-        scene_width = self.sceneRect().width()
-        focus_item = self.scene.focusItem()
-        if focus_item is None:
-            if self.drag_mode:
-                self.drag_mode = False
-                self.mouse_click_pos = None
-                return
-            if x_pos > 0 and x_pos < scene_width:
-                self.add_line(x_pos)
-        else:
-            if x_pos < 0 or x_pos > scene_width:
-                self.scene.removeItem(focus_item)
-                self.lines.pop(self.lines.index(focus_item))
-                self.clearFocus()
-            else:
-                focus_item.setPos(focus_item.pos().x(), 0)
-        self.mouse_click_pos = None
-
-    def mouseMoveEvent(self, event: QMouseEvent):
-        super().mouseMoveEvent(event)
-        item_at_pos = self.itemAt(event.pos())
-        if isinstance(item_at_pos, VerticalLine):
-            self.setCursor(QCursor(Qt.CursorShape.SizeHorCursor))
-        else:
-            self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
-        if event.buttons() == Qt.MouseButton.LeftButton:
-            if item_at_pos == self.pdf_image:
-                if self.mouse_click_pos is not None:
-                    self.drag_mode = True
-                    delta = self.mouse_click_pos - event.pos()
-                    if self.horizontalScrollBar().isVisible():
-                        self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() + delta.x())
-                    if self.verticalScrollBar().isVisible():
-                        self.verticalScrollBar().setValue(self.verticalScrollBar().value() + delta.y())
-                    self.mouse_click_pos = event.pos()
-                    self.setCursor(QCursor(Qt.CursorShape.OpenHandCursor))
-
-    def keyPressEvent(self, event: QKeyEvent):
-        if event.key() == Qt.Key.Key_PageDown:
-            self.next_page.emit(1)
-        elif event.key() == Qt.Key.Key_PageUp:
-            self.next_page.emit(-1)
-        else:
-            if self.scene.focusItem() is not None:
-                self.scene.focusItem().keyPressEvent(event)
-            else:
-                QGraphicsView.keyPressEvent(self, event)
-
     def ensure_minimal_zoom(self):
         tlp = self.mapFromScene(0, 0)
         brp = self.mapFromScene(self.sceneRect().size().width(), self.sceneRect().size().height())
@@ -278,20 +221,6 @@ class PageView(QGraphicsView):
         super().resizeEvent(event)
         self.ensure_minimal_zoom()
 
-    def add_line(self, pos_x):
-        self.lines.append(VerticalLine(self.pdf_image, pos_x))
-
-    def restore_lines(self, lines):
-        self.lines.clear()
-        scene_width = self.sceneRect().width()
-        for x in lines:
-            x_pos = int(self.dpi / INCH * x)
-            if x_pos > 0 and x_pos < scene_width:
-                self.add_line(x_pos)
-
-    def get_lines(self):
-        return sorted([round(x.pos().toPoint().x() * INCH / self.dpi, 6) for x in self.lines])
-
 
 class Q2PdfWidget(QWidget):
     ocr_job_done = pyqtSignal(str)
@@ -313,15 +242,18 @@ class Q2PdfWidget(QWidget):
         self._ocr_progress_callback = ocr_progress_callback
 
         self.preview_pages = {}
+        self.composed_preview_pages = []
+        self.composed_pdf = fitz.open()
         self.debug_data = None
         self.result_data = None
 
         self.toolbar_frame = self.get_toolbar()
-        self.doc_frame = self.get_frame()
+        self.doc_frame = QWidget()
+        doc_layout = QHBoxLayout(self.doc_frame)
+        doc_layout.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignCenter)
+        doc_layout.setContentsMargins(1, 1, 1, 1)
 
-        self.q2ocr = q2ocr.Q2OCR(
-            progress_callback=self.ocr_progress_tick, result_mode=self.result_mode, dpi=self.dpi
-        )
+        self.q2ocr = q2ocr.Q2OCR(result_mode=self.result_mode, dpi=self.dpi)
 
         self.main_layout = QVBoxLayout()
         self.main_layout.setContentsMargins(0, 0, 0, 0)
@@ -332,10 +264,37 @@ class Q2PdfWidget(QWidget):
         self.pages_model = PagesModel(self.preview_pages)
         self.pages_view.setModel(self.pages_model)
 
+        self.composed_pages_view = PdfPagesPreview()
+        self.composed_pages_model = PagesModel(self.composed_preview_pages)
+        self.composed_pages_view.setModel(self.composed_pages_model)
+        self.composed_page_count_label = QLabel("Итоговый документ (0 стр.)")
+
         self.page_view = PageView(self.q2ocr.dpi)
         self.page_view.next_page.connect(self.pages_view.next_page)
-        self.doc_frame.layout().addWidget(self.pages_view, stretch=0)
-        self.doc_frame.layout().addWidget(self.page_view, stretch=99)
+
+        self.add_page_button = QToolButton()
+        self.add_page_button.setText("Добавить страницу в итог")
+        self.add_page_button.setEnabled(False)
+        self.add_page_button.clicked.connect(self.add_current_page)
+
+        work_frame = QWidget()
+        work_layout = QVBoxLayout(work_frame)
+        work_layout.setContentsMargins(1, 1, 1, 1)
+        work_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        work_layout.addWidget(self.composed_page_count_label)
+        work_layout.addWidget(self.composed_pages_view, stretch=1)
+        work_layout.addWidget(QLabel("Страницы выбранного PDF"))
+        work_layout.addWidget(self.pages_view, stretch=2)
+
+        preview_frame = QWidget()
+        preview_layout = QVBoxLayout(preview_frame)
+        preview_layout.setContentsMargins(1, 1, 1, 1)
+        preview_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        preview_layout.addWidget(self.page_view, stretch=1)
+        preview_layout.addWidget(self.add_page_button)
+
+        doc_layout.addWidget(work_frame, stretch=0)
+        doc_layout.addWidget(preview_frame, stretch=1)
 
         self.main_layout.addWidget(self.toolbar_frame)
         self.main_layout.addWidget(self.doc_frame)
@@ -393,30 +352,30 @@ class Q2PdfWidget(QWidget):
         self.empty_cells_spin.valueChanged.connect(empty_cells_changed)
         self.empty_cells_spin.setToolTip("Allowed number of empty cells in row")
 
-        self.ocr_all_button = QToolButton()
-        self.ocr_all_button.setText("All")
-        self.ocr_all_button.clicked.connect(self.ocr_all)
-        self.ocr_all_button.setToolTip("Process all the pages ")
-        self.ocr_all_button.setStyleSheet(button_style_sheet + "* {background:lightgreen} ")
+        # self.ocr_all_button = QToolButton()
+        # self.ocr_all_button.setText("All")
+        # self.ocr_all_button.clicked.connect(self.ocr_all)
+        # self.ocr_all_button.setToolTip("Process all the pages ")
+        # self.ocr_all_button.setStyleSheet(button_style_sheet + "* {background:lightgreen} ")
 
-        self.ocr_sel_button = QToolButton()
-        self.ocr_sel_button.setText("Selected")
-        self.ocr_sel_button.clicked.connect(self.ocr_selected)
-        self.ocr_sel_button.setToolTip("Process only selected pages ")
-        self.ocr_sel_button.setStyleSheet(button_style_sheet)
+        # self.ocr_sel_button = QToolButton()
+        # self.ocr_sel_button.setText("Selected")
+        # self.ocr_sel_button.clicked.connect(self.ocr_selected)
+        # self.ocr_sel_button.setToolTip("Process only selected pages ")
+        # self.ocr_sel_button.setStyleSheet(button_style_sheet)
 
         self.file_name_label = QLabel()
 
-        toolbar_frame.layout().addWidget(self.open_file_button)
-        toolbar_frame.layout().addWidget(QLabel("Base column"))
-        toolbar_frame.layout().addWidget(self.base_column_spin)
-        toolbar_frame.layout().addWidget(QLabel("String delta"))
-        toolbar_frame.layout().addWidget(self.row_margin_spin)
-        toolbar_frame.layout().addWidget(QLabel("SEC:"))
-        toolbar_frame.layout().addWidget(self.empty_cells_spin)
-        toolbar_frame.layout().addWidget(QLabel("OCR:"))
-        toolbar_frame.layout().addWidget(self.ocr_all_button)
-        toolbar_frame.layout().addWidget(self.ocr_sel_button)
+        # toolbar_frame.layout().addWidget(self.open_file_button)
+        # toolbar_frame.layout().addWidget(QLabel("Base column"))
+        # toolbar_frame.layout().addWidget(self.base_column_spin)
+        # toolbar_frame.layout().addWidget(QLabel("String delta"))
+        # toolbar_frame.layout().addWidget(self.row_margin_spin)
+        # toolbar_frame.layout().addWidget(QLabel("SEC:"))
+        # toolbar_frame.layout().addWidget(self.empty_cells_spin)
+        # toolbar_frame.layout().addWidget(QLabel("OCR:"))
+        # toolbar_frame.layout().addWidget(self.ocr_all_button)
+        # toolbar_frame.layout().addWidget(self.ocr_sel_button)
 
         toolbar_frame.layout().addWidget(self.file_name_label)
         return toolbar_frame
@@ -450,6 +409,7 @@ class Q2PdfWidget(QWidget):
         self.q2ocr.pdf_file = value
         self.refresh_pages_view()
         self.pages_view.set_page(0)
+        self.add_page_button.setEnabled(True)
         self.file_name_label.setText(os.path.abspath(value))
         self.result_data = None
 
@@ -501,11 +461,34 @@ class Q2PdfWidget(QWidget):
         # image.loadFromData(self.q2ocr.get_page_image(row))
         # self.page_view.set_image(QPixmap.fromImage(image))
 
-    def restore_lines(self, lines_list=[2, 4]):
-        self.page_view.restore_lines(lines_list)
+    def add_current_page(self):
+        row = self.pages_view.currentIndex().row()
+        if self.q2ocr.pdf is None or row < 0 or row >= self.q2ocr.pdf.page_count:
+            return
 
-    def get_lines(self):
-        return self.page_view.get_lines()
+        self.composed_pdf.insert_pdf(self.q2ocr.pdf, from_page=row, to_page=row)
+        image = QImage()
+        if not image.loadFromData(self.q2ocr.get_page_image(row, self.preview_dpi)):
+            raise RuntimeError(f"Unable to render PDF page {row + 1}")
+        preview = QPixmap.fromImage(image)
+
+        painter = QPainter(preview)
+        font = painter.font()
+        font.setPointSize(self.preview_dpi)
+        painter.setFont(font)
+        painter.drawText(
+            QRectF(preview.rect()),
+            Qt.AlignmentFlag.AlignCenter,
+            f"{self.composed_pdf.page_count}",
+        )
+        painter.end()
+
+        self.composed_preview_pages.append(preview)
+        self.composed_pages_model.refresh()
+        self.composed_pages_view.resize_to_content()
+        self.composed_page_count_label.setText(
+            f"Итоговый документ ({self.composed_pdf.page_count} стр.)"
+        )
 
     def get_ocr_steps(self, page_numbers=None):
         page_numbers = self.q2ocr.validate_page_numbers(page_numbers)
@@ -517,40 +500,12 @@ class Q2PdfWidget(QWidget):
     def get_selected_pages(self):
         return self.pages_view.get_selected_rows()
 
-    def ocr_progress_tick(self, arg1=None, arg2=None):
-        if self._ocr_progress_callback is not None:
-            self._ocr_progress_callback(arg1, arg2)
-        else:
-            print(arg1, arg2)
-
-    def ocr_all(self):
-        return self.ocr([x for x in range(self.get_page_count())])
-
-    def ocr_selected(self):
-        return self.ocr(self.get_selected_pages())
-
-    def ocr(self, page_numbers=None, debug=False):
-        if len(self.get_lines()) < 2:
-            return
-        self.result_data = self.q2ocr.ocr(
-            page_numbers,
-            self.get_lines(),
-            base_column=self.base_column,
-            row_margin=self.row_margin,
-            aec=self.aec,
-            debug=True,
-        )
-        self.ocr_job_done.emit(self.result_data)
-        open_document(self.result_data)
-        # self.ocr_job_done.emit("Done")
-
 
 if __name__ == "__main__":
     app = QApplication([])
     ocr_widget = Q2PdfWidget(dpi=600)
     ocr_widget.pdf_file = "data/Scannen0003.pdf"
     ocr_widget.set_tesseract_cmd("C:\\Users\\andre\\Desktop\\pdflabels\\Tesseract-OCR\\tesseract.exe")
-    ocr_widget.restore_lines([3.1242, 12.2936, 13.656733, 15.206133, 17.873133])
     ocr_widget.preview_dpi = 10
     ocr_widget.ocr_job_done.connect(lambda arg: print(arg, ocr_widget.result_data))
     ocr_widget.resize(1000, 1000)
