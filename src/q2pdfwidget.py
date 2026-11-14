@@ -64,14 +64,15 @@ class ComposerToolButton(QToolButton):
         "add": '<path d="M12 5v14M5 12h14"/>',
         "remove": '<path d="M5 12h14"/>',
         "save": '<path d="M12 3v12m0 0 5-5m-5 5-5-5M5 19v2h14v-2"/>',
-        "open": '<path d="M3 7h7l2 2h9v11H3zM12 14h5m0 0-2-2m2 2-2 2"/>',
+        "open": '<path d="m6 14 1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5c0-1.1.9-2 2-2h3.93a2 2 0 0 1 1.66.9l.82 1.2a2 2 0 0 0 1.66.9H18a2 2 0 0 1 2 2v2" />',
     }
 
-    def __init__(self, text, icon_name, parent=None):
+    def __init__(self, text, icon_name, parent=None, primary=False):
         super().__init__(parent)
+        icon_color = "#ffffff" if primary else "#394552"
         svg = (
             '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">'
-            '<g fill="none" stroke="#394552" stroke-width="2" stroke-linecap="round" '
+            f'<g fill="none" stroke="{icon_color}" stroke-width="2" stroke-linecap="round" '
             f'stroke-linejoin="round">{self.SVG_ICONS[icon_name]}</g></svg>'
         )
         renderer = QSvgRenderer(QByteArray(svg.encode("utf-8")))
@@ -90,13 +91,14 @@ class ComposerToolButton(QToolButton):
             self.setFixedSize(32, 32)
         self.setIcon(QIcon(icon_pixmap))
         self.setIconSize(QSize(18, 18))
-        # self.setStyleSheet(
-        #     "QToolButton { padding: 4px 7px; border: 1px solid #c7c7c7; "
-        #     "border-radius: 3px; background-color: #f3f3f3; }"
-        #     "QToolButton:hover { background-color: #e5e5e5; }"
-        #     "QToolButton:pressed { background-color: #d7d7d7; }"
-        #     "QToolButton:disabled { color: #888; }"
-        # )
+        if primary:
+            self.setStyleSheet(
+                "QToolButton { color: white; background-color: #0d6efd; border: 1px solid #0d6efd; "
+                "border-radius: 4px; padding: 4px 10px; font-weight: 600; }"
+                "QToolButton:hover { background-color: #0b5ed7; border-color: #0b5ed7; }"
+                "QToolButton:pressed { background-color: #0a58ca; border-color: #0a58ca; }"
+                "QToolButton:disabled { background-color: #6c9bd2; border-color: #6c9bd2; }"
+            )
 
 
 class PagesModel(QAbstractTableModel):
@@ -575,7 +577,7 @@ class Q2PdfWidget(QWidget):
     def get_toolbar(self):
         toolbar_frame = self.get_frame()
 
-        self.open_file_button = ComposerToolButton("Open", "open")
+        self.open_file_button = ComposerToolButton("Open", "open", primary=True)
         self.open_file_button.clicked.connect(self.open_file)
         self.open_file_button.setToolTip("Open source PDF")
 
