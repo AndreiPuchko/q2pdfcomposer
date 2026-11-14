@@ -16,11 +16,8 @@ class Q2PdfComposer(Q2Form):
     def __init__(self, pdf_file=None):
         self.pdf = None
         self.pdf_file = pdf_file
-        self.preview_dpi = 10
-        self.image_dpi = 300
-        self.ocr_widget = q2pdfwidget.Q2PdfWidget(result_mode=q2pdfwidget.Q2PdfWidget.CSV_FILE)
+        self.ocr_widget = q2pdfwidget.Q2PdfWidget()
         self.ocr_widget.pdf_file = pdf_file
-        self.progress_bar = None
         super().__init__("Compose PDF")
 
     def on_init(self):

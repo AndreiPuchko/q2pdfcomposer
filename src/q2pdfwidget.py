@@ -230,7 +230,7 @@ class Q2PdfWidget(QWidget):
     def __init__(self, ocr_progress_callback=None, result_mode=CSV_FILE, dpi=300):
         super().__init__()
 
-        self._preview_dpi = 10
+        self._preview_dpi = 15
         self._pdf_file = None
         self.aec = 0
         self.dpi = dpi
@@ -267,24 +267,32 @@ class Q2PdfWidget(QWidget):
         self.composed_pages_view = PdfPagesPreview()
         self.composed_pages_model = PagesModel(self.composed_preview_pages)
         self.composed_pages_view.setModel(self.composed_pages_model)
-        self.composed_page_count_label = QLabel("Итоговый документ (0 стр.)")
+        self.composed_page_count_label = QLabel("Result PDF")
 
         self.page_view = PageView(self.q2ocr.dpi)
         self.page_view.next_page.connect(self.pages_view.next_page)
 
         self.add_page_button = QToolButton()
-        self.add_page_button.setText("Добавить страницу в итог")
+        self.add_page_button.setText("Add page")
         self.add_page_button.setEnabled(False)
         self.add_page_button.clicked.connect(self.add_current_page)
 
         work_frame = QWidget()
-        work_layout = QVBoxLayout(work_frame)
+        work_layout = QHBoxLayout(work_frame)
         work_layout.setContentsMargins(1, 1, 1, 1)
         work_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-        work_layout.addWidget(self.composed_page_count_label)
-        work_layout.addWidget(self.composed_pages_view, stretch=1)
-        work_layout.addWidget(QLabel("Страницы выбранного PDF"))
-        work_layout.addWidget(self.pages_view, stretch=2)
+
+        composed_frame = QWidget()
+        composed_layout = QVBoxLayout(composed_frame)
+        composed_layout.addWidget(self.composed_page_count_label)
+        composed_layout.addWidget(self.composed_pages_view, stretch=1)
+        work_layout.addWidget(composed_frame, stretch=1)
+
+        source_frame = QWidget()
+        source_layout = QVBoxLayout(source_frame)
+        source_layout.addWidget(QLabel("Source PDF"))
+        source_layout.addWidget(self.pages_view, stretch=2)
+        work_layout.addWidget(source_frame, stretch=2)
 
         preview_frame = QWidget()
         preview_layout = QVBoxLayout(preview_frame)
@@ -351,32 +359,10 @@ class Q2PdfWidget(QWidget):
 
         self.empty_cells_spin.valueChanged.connect(empty_cells_changed)
         self.empty_cells_spin.setToolTip("Allowed number of empty cells in row")
-
-        # self.ocr_all_button = QToolButton()
-        # self.ocr_all_button.setText("All")
-        # self.ocr_all_button.clicked.connect(self.ocr_all)
-        # self.ocr_all_button.setToolTip("Process all the pages ")
-        # self.ocr_all_button.setStyleSheet(button_style_sheet + "* {background:lightgreen} ")
-
-        # self.ocr_sel_button = QToolButton()
-        # self.ocr_sel_button.setText("Selected")
-        # self.ocr_sel_button.clicked.connect(self.ocr_selected)
-        # self.ocr_sel_button.setToolTip("Process only selected pages ")
-        # self.ocr_sel_button.setStyleSheet(button_style_sheet)
-
         self.file_name_label = QLabel()
 
-        # toolbar_frame.layout().addWidget(self.open_file_button)
-        # toolbar_frame.layout().addWidget(QLabel("Base column"))
-        # toolbar_frame.layout().addWidget(self.base_column_spin)
-        # toolbar_frame.layout().addWidget(QLabel("String delta"))
-        # toolbar_frame.layout().addWidget(self.row_margin_spin)
-        # toolbar_frame.layout().addWidget(QLabel("SEC:"))
-        # toolbar_frame.layout().addWidget(self.empty_cells_spin)
-        # toolbar_frame.layout().addWidget(QLabel("OCR:"))
-        # toolbar_frame.layout().addWidget(self.ocr_all_button)
-        # toolbar_frame.layout().addWidget(self.ocr_sel_button)
-
+        toolbar_frame.layout().addWidget(self.open_file_button)
+        toolbar_frame.layout().addWidget(QLabel("Source file"))
         toolbar_frame.layout().addWidget(self.file_name_label)
         return toolbar_frame
 
@@ -486,13 +472,7 @@ class Q2PdfWidget(QWidget):
         self.composed_preview_pages.append(preview)
         self.composed_pages_model.refresh()
         self.composed_pages_view.resize_to_content()
-        self.composed_page_count_label.setText(
-            f"Итоговый документ ({self.composed_pdf.page_count} стр.)"
-        )
-
-    def get_ocr_steps(self, page_numbers=None):
-        page_numbers = self.q2ocr.validate_page_numbers(page_numbers)
-        return len(page_numbers) * len(self.get_lines())
+        self.composed_page_count_label.setText(f"Result PDF ({self.composed_pdf.page_count} pages)")
 
     def get_page_count(self):
         return self.pages_view.model().rowCount()
@@ -505,7 +485,6 @@ if __name__ == "__main__":
     app = QApplication([])
     ocr_widget = Q2PdfWidget(dpi=600)
     ocr_widget.pdf_file = "data/Scannen0003.pdf"
-    ocr_widget.set_tesseract_cmd("C:\\Users\\andre\\Desktop\\pdflabels\\Tesseract-OCR\\tesseract.exe")
     ocr_widget.preview_dpi = 10
     ocr_widget.ocr_job_done.connect(lambda arg: print(arg, ocr_widget.result_data))
     ocr_widget.resize(1000, 1000)
