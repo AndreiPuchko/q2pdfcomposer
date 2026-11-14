@@ -361,7 +361,7 @@ class Q2PdfWidget(QWidget):
         self.preview_source_label = QLabel("Preview")
 
         self.first_page_button = QToolButton()
-        self.first_page_button.setText("|◀")
+        self.first_page_button.setText("❘◀")
         self.first_page_button.setToolTip("First page")
         self.first_page_button.clicked.connect(lambda: self.go_to_preview_page(0))
 
@@ -382,9 +382,19 @@ class Q2PdfWidget(QWidget):
         self.next_page_button.clicked.connect(lambda: self.next_preview_page(1))
 
         self.last_page_button = QToolButton()
-        self.last_page_button.setText("▶|")
+        self.last_page_button.setText("▶❘")
         self.last_page_button.setToolTip("Last page")
         self.last_page_button.clicked.connect(self.go_to_last_preview_page)
+
+        navigation_font = self.first_page_button.font()
+        navigation_font.setPointSize(navigation_font.pointSize() + 4)
+        for button in (
+            self.first_page_button,
+            self.previous_page_button,
+            self.next_page_button,
+            self.last_page_button,
+        ):
+            button.setFont(navigation_font)
 
         self.add_page_button = QToolButton()
         self.add_page_button.setText("Add page")
