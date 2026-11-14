@@ -4,6 +4,6 @@ temp
 __pycache__
 *.png
 q2gui.ini
-q2pdfwidget.spec
+*.spec
 build/
 dist/
