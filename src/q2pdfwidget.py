@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
     QSpinBox,
     QDoubleSpinBox,
     QFileDialog,
+    QMessageBox,
     QToolButton,
     QApplication,
     QHBoxLayout,
@@ -287,6 +288,11 @@ class Q2PdfWidget(QWidget):
         self.remove_page_button.setEnabled(False)
         self.remove_page_button.clicked.connect(self.remove_current_page)
 
+        self.save_result_button = QToolButton()
+        self.save_result_button.setText("Save result")
+        self.save_result_button.setEnabled(False)
+        self.save_result_button.clicked.connect(self.save_result)
+
         work_frame = QWidget()
         work_layout = QHBoxLayout(work_frame)
         work_layout.setContentsMargins(1, 1, 1, 1)
@@ -316,6 +322,7 @@ class Q2PdfWidget(QWidget):
         buttons_layout.setContentsMargins(1, 1, 1, 1)
         buttons_layout.addWidget(self.add_page_button)
         buttons_layout.addWidget(self.remove_page_button)
+        buttons_layout.addWidget(self.save_result_button)
 
         preview_layout.addWidget(buttons_frame, stretch=0)
         preview_layout.addWidget(self.page_view, stretch=1)
@@ -497,15 +504,36 @@ class Q2PdfWidget(QWidget):
         else:
             self.pages_view.next_page(page)
 
+    def save_result(self):
+        if self.composed_pdf.page_count == 0:
+            return
+
+        file_name, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save result PDF",
+            "result.pdf",
+            "PDF files (*.pdf)",
+        )
+        if not file_name:
+            return
+
+        root, extension = os.path.splitext(file_name)
+        if extension.lower() != ".pdf":
+            file_name = f"{root}.pdf" if extension else f"{file_name}.pdf"
+        try:
+            self.composed_pdf.save(file_name)
+        except (fitz.mupdf.FzErrorBase, OSError, RuntimeError, ValueError) as error:
+            QMessageBox.critical(self, "Save failed", f"Could not save PDF:\n{error}")
+
     def remove_current_page(self):
         row = self._preview_row
         if not self._previewing_result or row is None or row < 0 or row >= self.composed_pdf.page_count:
             return
 
         self.composed_pdf.delete_page(row)
+        self.save_result_button.setEnabled(self.composed_pdf.page_count > 0)
         self.composed_preview_pages[:] = [
-            self.create_composed_preview(page_number)
-            for page_number in range(self.composed_pdf.page_count)
+            self.create_composed_preview(page_number) for page_number in range(self.composed_pdf.page_count)
         ]
         self.composed_pages_model.refresh()
         self.composed_pages_view.resize_to_content()
@@ -532,6 +560,7 @@ class Q2PdfWidget(QWidget):
             return
 
         self.composed_pdf.insert_pdf(self.q2ocr.pdf, from_page=row, to_page=row)
+        self.save_result_button.setEnabled(True)
         preview = self.create_composed_preview(self.composed_pdf.page_count - 1)
         self.composed_preview_pages.append(preview)
         self.composed_pages_model.refresh()
