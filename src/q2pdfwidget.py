@@ -294,6 +294,8 @@ class Q2PdfWidget(QWidget):
         self.pages_model = PagesModel(self.preview_pages)
         self.pages_view.setModel(self.pages_model)
         self.pages_view.clicked.connect(lambda index: self.preview_page_changed(index.row()))
+        self.pages_view.doubleClicked.connect(lambda index: self.add_source_page(index.row()))
+        self.pages_view.setToolTip("Double-click a page to add it to the result")
 
         self.composed_pages_view = PdfPagesPreview()
         self.composed_pages_view.row_selected.connect(self.preview_composed_page_changed)
@@ -353,7 +355,6 @@ class Q2PdfWidget(QWidget):
         preview_layout = QVBoxLayout(preview_frame)
         preview_layout.setContentsMargins(1, 1, 1, 1)
         preview_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-        preview_layout.addWidget(self.preview_source_label)
 
         buttons_frame = QWidget()
         buttons_layout = QHBoxLayout(buttons_frame)
@@ -364,6 +365,7 @@ class Q2PdfWidget(QWidget):
         buttons_layout.addWidget(self.save_result_button)
 
         preview_layout.addWidget(buttons_frame, stretch=0)
+        preview_layout.addWidget(self.preview_source_label)
         preview_layout.addWidget(self.page_view, stretch=1)
 
         doc_layout.addWidget(work_frame, stretch=0)
@@ -689,6 +691,13 @@ class Q2PdfWidget(QWidget):
         self.composed_pages_model.refresh()
         self.composed_pages_view.resize_to_content()
         self.composed_page_count_label.setText(f"Result PDF ({self.composed_pdf.page_count} pages)")
+
+    def add_source_page(self, row):
+        if self.pdf is None or row < 0 or row >= self.pdf.page_count:
+            return
+        self.pages_view.set_page(row)
+        self.preview_page_changed(row)
+        self.add_current_page()
 
     def create_composed_preview(self, page_number):
         image = QImage()
