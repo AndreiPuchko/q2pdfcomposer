@@ -423,6 +423,11 @@ class Q2PdfWidget(QWidget):
         self.last_page_button.setToolTip("Last page")
         self.last_page_button.clicked.connect(self.go_to_last_preview_page)
 
+        self.rotate_page_button = QToolButton()
+        self.rotate_page_button.setText("↻")
+        self.rotate_page_button.setToolTip("Rotate page clockwise")
+        self.rotate_page_button.clicked.connect(self.rotate_preview_page)
+
         navigation_font = self.first_page_button.font()
         navigation_font.setPointSize(navigation_font.pointSize() + 6)
         for button in (
@@ -430,6 +435,7 @@ class Q2PdfWidget(QWidget):
             self.previous_page_button,
             self.next_page_button,
             self.last_page_button,
+            self.rotate_page_button,
         ):
             button.setFont(navigation_font)
 
@@ -491,6 +497,7 @@ class Q2PdfWidget(QWidget):
         page_navigation_layout.addWidget(self.page_number_input)
         page_navigation_layout.addWidget(self.next_page_button)
         page_navigation_layout.addWidget(self.last_page_button)
+        page_navigation_layout.addWidget(self.rotate_page_button)
         page_navigation_layout.addStretch(1)
 
         preview_layout.addWidget(buttons_frame, stretch=0)
@@ -736,6 +743,7 @@ class Q2PdfWidget(QWidget):
         self.page_number_input.setValue(row + 1 if row >= 0 else 0)
         self.page_number_input.blockSignals(was_blocked)
         self.page_number_input.setEnabled(page_count > 0)
+        self.rotate_page_button.setEnabled(row >= 0)
         self.first_page_button.setEnabled(row > 0)
         self.previous_page_button.setEnabled(row > 0)
         self.next_page_button.setEnabled(0 <= row < page_count - 1)
@@ -752,6 +760,37 @@ class Q2PdfWidget(QWidget):
         elif self.pdf is not None and 0 <= row < self.pdf.page_count:
             self.source_pages_view.set_page(row)
             self.preview_page_changed(row)
+
+    def rotate_preview_page(self):
+        row = self._preview_row
+        if row is None:
+            return
+
+        if self._previewing_result:
+            document = self.composed_pdf
+            if row < 0 or row >= document.page_count:
+                return
+            page = document.load_page(row)
+            page.set_rotation((page.rotation + 90) % 360)
+            self.composed_preview_pages[:] = [
+                self.create_composed_preview(page_number)
+                for page_number in range(document.page_count)
+            ]
+            self.composed_pages_model.refresh()
+            self.resize_composed_pages_view()
+            self._preview_row = None
+            self.composed_pages_view.set_page(row)
+            self.preview_composed_page_changed(row)
+        else:
+            if self.pdf is None or row < 0 or row >= self.pdf.page_count:
+                return
+            page = self.pdf.load_page(row)
+            page.set_rotation((page.rotation + 90) % 360)
+            self._preview_row = None
+            self.refresh_pages_view()
+            self.source_pages_view.set_page(row)
+            self.preview_page_changed(row)
+        self.page_view.fit_page()
 
     def go_to_last_preview_page(self):
         if self._previewing_result:
