@@ -646,7 +646,12 @@ class Q2PdfWidget(QWidget):
 
     @pdf_file.setter
     def pdf_file(self, value):
-        new_pdf = fitz.open(value) if value else None
+        try:
+            new_pdf = fitz.open(value) if value else None
+        except (fitz.mupdf.FzErrorBase, OSError, RuntimeError, ValueError) as error:
+            QMessageBox.critical(self, "Open failed", f"Could not open PDF:\n{error}")
+            self.open_file()
+            return
         old_pdf = self.pdf
         self.pdf = new_pdf
         self._pdf_file = value or None
@@ -970,8 +975,8 @@ class Q2PdfWidget(QWidget):
 
 if __name__ == "__main__":
     app = QApplication([])
-    pdf_widget = Q2PdfWidget(source_file="data/Scannen0003.pdf", dpi=150)
-    # pdf_widget = Q2PdfWidget(dpi=150)
+    # pdf_widget = Q2PdfWidget(source_file="data/Scannen00031.pdf", dpi=150)
+    pdf_widget = Q2PdfWidget(dpi=150)
     pdf_widget.preview_dpi = 10
     pdf_widget.resize(1000, 1000)
     pdf_widget.move(100, 100)
