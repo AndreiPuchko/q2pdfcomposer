@@ -36,6 +36,7 @@ from PyQt6.QtGui import (
     QWheelEvent,
     QPainter,
     QColor,
+    QFont,
 )
 from PyQt6.QtCore import (
     Qt,
@@ -222,6 +223,7 @@ class PdfPagesPreview(QTableView):
 
 class PageView(QGraphicsView):
     next_page = pyqtSignal(int)
+    add_current_page = pyqtSignal()
 
     def __init__(self, dpi):
         super().__init__()
@@ -230,6 +232,7 @@ class PageView(QGraphicsView):
         self.pdf_image = QGraphicsPixmapItem()
         self.scene.addItem(self.pdf_image)
         self.setBackgroundBrush(Qt.GlobalColor.lightGray)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.lines = []
         self.mouse_click_pos = None
         self.drag_mode = False
@@ -274,6 +277,25 @@ class PageView(QGraphicsView):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self.ensure_minimal_zoom()
+
+    def keyPressEvent(self, event: QKeyEvent):
+        if event.key() in (Qt.Key.Key_PageUp, Qt.Key.Key_PageDown, Qt.Key.Key_Down, Qt.Key.Key_Up):
+            self.next_page.emit(
+                -1
+                if event.key()
+                in [
+                    Qt.Key.Key_PageUp,
+                    Qt.Key.Key_Up,
+                ]
+                else 1
+            )
+            event.accept()
+            return
+        elif event.key() in (Qt.Key.Key_Enter, Qt.Key.Key_Return, Qt.Key.Key_Plus):
+            self.add_current_page.emit()
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
 
 class Q2PdfWidget(QWidget):
@@ -334,8 +356,35 @@ class Q2PdfWidget(QWidget):
 
         self.page_view = PageView(self.dpi)
         self.page_view.next_page.connect(self.next_preview_page)
+        self.page_view.add_current_page.connect(self.add_current_page)
 
         self.preview_source_label = QLabel("Preview")
+
+        self.first_page_button = QToolButton()
+        self.first_page_button.setText("|◀")
+        self.first_page_button.setToolTip("First page")
+        self.first_page_button.clicked.connect(lambda: self.go_to_preview_page(0))
+
+        self.previous_page_button = QToolButton()
+        self.previous_page_button.setText("◀")
+        self.previous_page_button.setToolTip("Previous page")
+        self.previous_page_button.clicked.connect(lambda: self.next_preview_page(-1))
+
+        self.page_number_input = QSpinBox()
+        self.page_number_input.setKeyboardTracking(False)
+        self.page_number_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.page_number_input.setMinimumWidth(75)
+        self.page_number_input.valueChanged.connect(self.go_to_page_number)
+
+        self.next_page_button = QToolButton()
+        self.next_page_button.setText("▶")
+        self.next_page_button.setToolTip("Next page")
+        self.next_page_button.clicked.connect(lambda: self.next_preview_page(1))
+
+        self.last_page_button = QToolButton()
+        self.last_page_button.setText("▶|")
+        self.last_page_button.setToolTip("Last page")
+        self.last_page_button.clicked.connect(self.go_to_last_preview_page)
 
         self.add_page_button = QToolButton()
         self.add_page_button.setText("Add page")
@@ -359,12 +408,14 @@ class Q2PdfWidget(QWidget):
 
         composed_frame = QWidget()
         composed_layout = QVBoxLayout(composed_frame)
+        composed_layout.setContentsMargins(0, 0, 0, 0)
         composed_layout.addWidget(self.composed_page_count_label)
         composed_layout.addWidget(self.composed_pages_view, stretch=1)
         work_layout.addWidget(composed_frame, stretch=1)
 
         source_frame = QWidget()
         source_layout = QVBoxLayout(source_frame)
+        source_layout.setContentsMargins(0, 0, 0, 0)
         source_layout.addWidget(QLabel("Source PDF"))
         source_layout.addWidget(self.pages_view, stretch=2)
         work_layout.addWidget(source_frame, stretch=2)
@@ -382,8 +433,21 @@ class Q2PdfWidget(QWidget):
         buttons_layout.addWidget(self.remove_page_button)
         buttons_layout.addWidget(self.save_result_button)
 
+        page_navigation_frame = QWidget()
+        page_navigation_layout = QHBoxLayout(page_navigation_frame)
+        page_navigation_layout.setContentsMargins(*self.layoutMargins)
+        page_navigation_layout.setSpacing(2)
+        page_navigation_layout.addStretch(1)
+        page_navigation_layout.addWidget(self.first_page_button)
+        page_navigation_layout.addWidget(self.previous_page_button)
+        page_navigation_layout.addWidget(self.page_number_input)
+        page_navigation_layout.addWidget(self.next_page_button)
+        page_navigation_layout.addWidget(self.last_page_button)
+        page_navigation_layout.addStretch(1)
+
         preview_layout.addWidget(buttons_frame, stretch=0)
         preview_layout.addWidget(self.preview_source_label)
+        preview_layout.addWidget(page_navigation_frame, stretch=0)
         preview_layout.addWidget(self.page_view, stretch=1)
 
         doc_layout.addWidget(work_frame, stretch=0)
@@ -396,6 +460,7 @@ class Q2PdfWidget(QWidget):
             child.setAcceptDrops(True)
             child.installEventFilter(self)
         self.pages_view.preview_dpi_changed.connect(self.preview_dpi_changed)
+        self.update_page_navigation()
         if source_file:
             self.pdf_file = source_file
         else:
@@ -503,6 +568,7 @@ class Q2PdfWidget(QWidget):
             self.remove_page_button.setEnabled(False)
             self.preview_source_label.setText("Preview")
             self.page_view.set_image(QPixmap())
+            self.update_page_navigation()
             self.file_name_label.clear()
         else:
             self.refresh_pages_view()
@@ -546,6 +612,7 @@ class Q2PdfWidget(QWidget):
             self.pages_model.refresh()
             self.pages_view.resize_to_content()
             self.resize_composed_pages_view()
+            self.update_page_navigation()
             return
         for key, value in self.get_preview_pages(self.preview_dpi).items():
             image = QImage()
@@ -580,6 +647,7 @@ class Q2PdfWidget(QWidget):
         self.composed_pages_view.clearSelection()
         self.preview_source_label.setText(f"Source PDF — page {row + 1} of {self.pdf.page_count}")
         self.page_view.set_image(self.get_page_image(row, QImage=QImage, QPixmap=QPixmap))
+        self.update_page_navigation()
 
     def preview_composed_page_changed(self, row):
         if row < 0 or row >= self.composed_pdf.page_count:
@@ -601,12 +669,52 @@ class Q2PdfWidget(QWidget):
                 document=self.composed_pdf,
             )
         )
+        self.update_page_navigation()
+
+    def update_page_navigation(self):
+        if self._previewing_result:
+            page_count = self.composed_pdf.page_count
+        else:
+            page_count = self.pdf.page_count if self.pdf is not None else 0
+
+        row = self._preview_row if self._preview_row is not None else 0
+        row = row if 0 <= row < page_count else -1
+        was_blocked = self.page_number_input.blockSignals(True)
+        if page_count:
+            self.page_number_input.setRange(1, page_count)
+        else:
+            self.page_number_input.setRange(0, 0)
+        self.page_number_input.setSuffix(f" / {page_count}")
+        self.page_number_input.setValue(row + 1 if row >= 0 else 0)
+        self.page_number_input.blockSignals(was_blocked)
+        self.page_number_input.setEnabled(page_count > 0)
+        self.first_page_button.setEnabled(row > 0)
+        self.previous_page_button.setEnabled(row > 0)
+        self.next_page_button.setEnabled(0 <= row < page_count - 1)
+        self.last_page_button.setEnabled(0 <= row < page_count - 1)
+
+    def go_to_page_number(self, page_number):
+        self.go_to_preview_page(page_number - 1)
+
+    def go_to_preview_page(self, row):
+        if self._previewing_result:
+            if 0 <= row < self.composed_pdf.page_count:
+                self.composed_pages_view.set_page(row)
+                self.preview_composed_page_changed(row)
+        elif self.pdf is not None and 0 <= row < self.pdf.page_count:
+            self.pages_view.set_page(row)
+            self.preview_page_changed(row)
+
+    def go_to_last_preview_page(self):
+        if self._previewing_result:
+            page_count = self.composed_pdf.page_count
+        else:
+            page_count = self.pdf.page_count if self.pdf is not None else 0
+        self.go_to_preview_page(page_count - 1)
 
     def next_preview_page(self, page):
-        if self._previewing_result:
-            self.composed_pages_view.next_page(page)
-        else:
-            self.pages_view.next_page(page)
+        if self._preview_row is not None:
+            self.go_to_preview_page(self._preview_row + page)
 
     def reorder_composed_pages(self, source_row, destination_row):
         document_destination = destination_row
@@ -635,6 +743,7 @@ class Q2PdfWidget(QWidget):
         if preview_row is not None:
             self._preview_row = None
             self.composed_pages_view.set_page(preview_row)
+        self.update_page_navigation()
 
     def save_result(self):
         if self.composed_pdf.page_count == 0:
@@ -682,6 +791,7 @@ class Q2PdfWidget(QWidget):
                 self.remove_page_button.setEnabled(False)
                 self.preview_source_label.setText("Preview")
                 self.page_view.set_image(QPixmap())
+                self.update_page_navigation()
 
     def add_current_page(self):
         if self._previewing_result:
