@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QToolButton,
     QApplication,
+    QToolTip,
     QHBoxLayout,
     QVBoxLayout,
     QWidget,
@@ -36,7 +37,17 @@ from PyQt6.QtGui import (
     QPainter,
     QColor,
 )
-from PyQt6.QtCore import Qt, QAbstractTableModel, QMimeData, QModelIndex, QVariant, QRectF, QSize, pyqtSignal
+from PyQt6.QtCore import (
+    Qt,
+    QAbstractTableModel,
+    QEvent,
+    QMimeData,
+    QModelIndex,
+    QVariant,
+    QRectF,
+    QSize,
+    pyqtSignal,
+)
 
 
 class PagesModel(QAbstractTableModel):
@@ -380,6 +391,10 @@ class Q2PdfWidget(QWidget):
 
         self.main_layout.addWidget(self.toolbar_frame)
         self.main_layout.addWidget(self.doc_frame)
+        self.setAcceptDrops(True)
+        for child in self.findChildren(QWidget):
+            child.setAcceptDrops(True)
+            child.installEventFilter(self)
         self.pages_view.preview_dpi_changed.connect(self.preview_dpi_changed)
         if source_file:
             self.pdf_file = source_file
@@ -416,6 +431,39 @@ class Q2PdfWidget(QWidget):
         file_name = QFileDialog.getOpenFileName(caption="Open PDF file", filter="PDF (*.PDF)")[0]
         if file_name:
             self.pdf_file = file_name
+
+    @staticmethod
+    def dropped_pdf_path(mime_data):
+        if not mime_data.hasUrls():
+            return None
+        urls = mime_data.urls()
+        if len(urls) != 1 or not urls[0].isLocalFile():
+            return None
+        file_name = urls[0].toLocalFile()
+        if os.path.splitext(file_name)[1].lower() != ".pdf":
+            return None
+        return file_name
+
+    def eventFilter(self, watched, event):
+        if event.type() in (QEvent.Type.DragEnter, QEvent.Type.DragMove):
+            if self.dropped_pdf_path(event.mimeData()):
+                QToolTip.showText(QCursor.pos(), "Open", self)
+                event.acceptProposedAction()
+                return True
+        elif event.type() == QEvent.Type.Drop:
+            file_name = self.dropped_pdf_path(event.mimeData())
+            if file_name:
+                try:
+                    self.pdf_file = file_name
+                except (fitz.mupdf.FzErrorBase, OSError, RuntimeError, ValueError) as error:
+                    QMessageBox.critical(self, "Open failed", f"Could not open PDF:\n{error}")
+                finally:
+                    QToolTip.hideText()
+                event.acceptProposedAction()
+                return True
+        elif event.type() == QEvent.Type.DragLeave:
+            QToolTip.hideText()
+        return super().eventFilter(watched, event)
 
     @property
     def preview_dpi(self):
