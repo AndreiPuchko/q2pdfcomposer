@@ -34,22 +34,15 @@ from PyQt6.QtGui import (
     QShowEvent,
     QWheelEvent,
     QPainter,
+    QColor,
 )
-from PyQt6.QtCore import Qt, QAbstractTableModel, QMimeData, QModelIndex, QVariant, QRectF, pyqtSignal
-
-
-def open_document(folder):
-    if "win32" in sys.platform:
-        os.startfile(folder)
-    elif "darwin" in sys.platform:
-        subprocess.Popen(["open", folder])
-    else:
-        subprocess.Popen(["xdg-open", folder])
+from PyQt6.QtCore import Qt, QAbstractTableModel, QMimeData, QModelIndex, QVariant, QRectF, QSize, pyqtSignal
 
 
 class PagesModel(QAbstractTableModel):
     rows_reordered = pyqtSignal(int, int)
     PAGE_ROW_MIME_TYPE = "application/x-pdf-composer-page-row"
+    THUMBNAIL_SPACING = 5
 
     def __init__(self, preview_pages, allow_reordering=False):
         super().__init__()
@@ -66,14 +59,18 @@ class PagesModel(QAbstractTableModel):
         if role == Qt.ItemDataRole.DisplayRole:
             if index.column() == 0:
                 return f"{index.row()+1}"
+        elif role == Qt.ItemDataRole.BackgroundRole:
+            return QColor("lightgrey")
         elif role == Qt.ItemDataRole.TextAlignmentRole:
             return Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom
         if role == Qt.ItemDataRole.DecorationRole:
             if index.column() == 0:
                 return self.preview_pages[index.row()]
-        elif role == Qt.ItemDataRole.SizeHintRole:
-            if index.column() == 0:
-                return self.preview_pages[index.row()].size()
+        elif role == Qt.ItemDataRole.SizeHintRole and index.column() == 0:
+            size = self.preview_pages[index.row()].size()
+            return QSize(
+                size.width() + int(self.THUMBNAIL_SPACING * 1.5), size.height() + self.THUMBNAIL_SPACING
+            )
         return QVariant()
 
     def refresh(self):
@@ -158,11 +155,14 @@ class PagesModel(QAbstractTableModel):
 class PdfPagesPreview(QTableView):
     row_selected = pyqtSignal(int)
     preview_dpi_changed = pyqtSignal(int)
+    content_width_changed = pyqtSignal(int)
 
     def __init__(self):
         super().__init__()
+        self.minimum_content_width = 0
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        # self.setShowGrid(False)
         self.horizontalHeader().hide()
         self.verticalHeader().hide()
 
@@ -179,13 +179,16 @@ class PdfPagesPreview(QTableView):
         index = self.model().index(new_row, 0)
         self.setCurrentIndex(index)
 
-    def resize_to_content(self):
+    def resize_to_content(self, minimum_width=None):
+        if minimum_width is not None:
+            self.minimum_content_width = minimum_width
         self.resizeColumnsToContents()
         self.resizeRowsToContents()
         w = self.columnWidth(0) + (
             self.verticalScrollBar().width() if self.verticalScrollBar().isVisible() else 0
         )
-        self.setFixedWidth(w)
+        self.setFixedWidth(max(w, self.minimum_content_width))
+        self.content_width_changed.emit(self.width())
 
     def resizeEvent(self, e):
         self.resize_to_content()
@@ -216,7 +219,6 @@ class PageView(QGraphicsView):
         self.pdf_image = QGraphicsPixmapItem()
         self.scene.addItem(self.pdf_image)
         self.setBackgroundBrush(Qt.GlobalColor.lightGray)
-        self.dpi = dpi
         self.lines = []
         self.mouse_click_pos = None
         self.drag_mode = False
@@ -274,9 +276,6 @@ class Q2PdfWidget(QWidget):
         self.aec = 0
         self.dpi = dpi
 
-        self._base_column = 1
-        self._row_margin = 0.5
-
         self.preview_pages = {}
         self.composed_preview_pages = []
         self.composed_pdf = fitz.open()
@@ -284,15 +283,16 @@ class Q2PdfWidget(QWidget):
         self._preview_row = None
         self.debug_data = None
         self.result_data = None
+        self.layoutMargins = [3, 3, 3, 3]
 
         self.toolbar_frame = self.get_toolbar()
         self.doc_frame = QWidget()
         doc_layout = QHBoxLayout(self.doc_frame)
         doc_layout.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignCenter)
-        doc_layout.setContentsMargins(1, 1, 1, 1)
+        doc_layout.setContentsMargins(*self.layoutMargins)
 
         self.main_layout = QVBoxLayout()
-        self.main_layout.setContentsMargins(0, 0, 0, 0)
+        self.main_layout.setContentsMargins(*self.layoutMargins)
         self.setLayout(self.main_layout)
 
         self.pages_view = PdfPagesPreview()
@@ -315,6 +315,7 @@ class Q2PdfWidget(QWidget):
         self.composed_pages_view.setDropIndicatorShown(True)
         self.composed_pages_view.setDefaultDropAction(Qt.DropAction.MoveAction)
         self.composed_pages_view.setDragDropOverwriteMode(False)
+        self.pages_view.content_width_changed.connect(self.resize_composed_pages_view)
         self.composed_pages_view.clicked.connect(
             lambda index: self.preview_composed_page_changed(index.row())
         )
@@ -342,7 +343,7 @@ class Q2PdfWidget(QWidget):
 
         work_frame = QWidget()
         work_layout = QHBoxLayout(work_frame)
-        work_layout.setContentsMargins(1, 1, 1, 1)
+        work_layout.setContentsMargins(*self.layoutMargins)
         work_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
         composed_frame = QWidget()
@@ -359,13 +360,13 @@ class Q2PdfWidget(QWidget):
 
         preview_frame = QWidget()
         preview_layout = QVBoxLayout(preview_frame)
-        preview_layout.setContentsMargins(1, 1, 1, 1)
+        preview_layout.setContentsMargins(*self.layoutMargins)
         preview_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
         buttons_frame = QWidget()
         buttons_layout = QHBoxLayout(buttons_frame)
         buttons_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
-        buttons_layout.setContentsMargins(1, 1, 1, 1)
+        buttons_layout.setContentsMargins(*self.layoutMargins)
         buttons_layout.addWidget(self.add_page_button)
         buttons_layout.addWidget(self.remove_page_button)
         buttons_layout.addWidget(self.save_result_button)
@@ -393,43 +394,17 @@ class Q2PdfWidget(QWidget):
         else:
             frame.setLayout(QVBoxLayout())
             frame.layout().setAlignment(Qt.AlignmentFlag.AlignTop)
-        frame.layout().setContentsMargins(1, 1, 1, 1)
+        frame.layout().setContentsMargins(*self.layoutMargins)
         return frame
 
     def get_toolbar(self):
-        button_style_sheet = "* {background:silver} *:hover {background:green; color:white}"
         toolbar_frame = self.get_frame()
+
         self.open_file_button = QToolButton()
-        self.open_file_button.setText("🗁")
+        self.open_file_button.setText("Open")
         self.open_file_button.clicked.connect(self.open_file)
-        self.open_file_button.setToolTip("Open another ")
-        self.open_file_button.setStyleSheet(button_style_sheet)
+        self.open_file_button.setToolTip("Open source PDF")
 
-        self.base_column_spin = QSpinBox()
-        self.base_column_spin.setValue(self.base_column)
-
-        def base_column_changed(value):
-            self.base_column = value
-
-        self.base_column_spin.valueChanged.connect(base_column_changed)
-
-        self.row_margin_spin = QDoubleSpinBox()
-        self.row_margin_spin.setSingleStep(0.01)
-        self.row_margin_spin.setValue(self.row_margin)
-
-        def row_margin_changed(value):
-            self.row_margin = value
-
-        self.row_margin_spin.valueChanged.connect(row_margin_changed)
-
-        self.empty_cells_spin = QSpinBox()
-        self.empty_cells_spin.setValue(self.aec)
-
-        def empty_cells_changed(value):
-            self.aec = value
-
-        self.empty_cells_spin.valueChanged.connect(empty_cells_changed)
-        self.empty_cells_spin.setToolTip("Allowed number of empty cells in row")
         self.file_name_label = QLabel()
 
         toolbar_frame.layout().addWidget(self.open_file_button)
@@ -473,6 +448,7 @@ class Q2PdfWidget(QWidget):
             self.preview_pages.clear()
             self.pages_model.refresh()
             self.pages_view.resize_to_content()
+            self.resize_composed_pages_view()
             self.pages_view.clearSelection()
             self.pages_view.setCurrentIndex(QModelIndex())
             self.add_page_button.setEnabled(False)
@@ -511,46 +487,17 @@ class Q2PdfWidget(QWidget):
             return QPixmap.fromImage(image)
         return pixmap.tobytes("png")
 
-    def validate_page_numbers(self, page_numbers=None):
-        if self.pdf is None:
-            return []
-        if page_numbers is None:
-            page_numbers = list(range(self.pdf.page_count))
-        elif not isinstance(page_numbers, list):
-            page_numbers = [int(page_numbers)]
-        return [page for page in page_numbers if 0 <= page < self.pdf.page_count]
-
     def get_preview_pages(self, preview_dpi):
         if self.pdf is None:
             return {}
-        return {
-            page.number: self.get_page_image(page.number, preview_dpi)
-            for page in self.pdf.pages()
-        }
-
-    @property
-    def base_column(self):
-        return self._base_column
-
-    @base_column.setter
-    def base_column(self, value):
-        self._base_column = value
-        self.base_column_spin.setValue(value)
-
-    @property
-    def row_margin(self):
-        return self._row_margin
-
-    @row_margin.setter
-    def row_margin(self, value):
-        self._row_margin = value
-        self.row_margin_spin.setValue(value)
+        return {page.number: self.get_page_image(page.number, preview_dpi) for page in self.pdf.pages()}
 
     def refresh_pages_view(self):
         self.preview_pages.clear()
         if self.pdf is None:
             self.pages_model.refresh()
             self.pages_view.resize_to_content()
+            self.resize_composed_pages_view()
             return
         for key, value in self.get_preview_pages(self.preview_dpi).items():
             image = QImage()
@@ -567,6 +514,7 @@ class Q2PdfWidget(QWidget):
         previous_row = self.pages_view.currentIndex().row()
         self.pages_model.refresh()
         self.pages_view.resize_to_content()
+        self.resize_composed_pages_view()
         if previous_row >= 0 and previous_row < self.pages_model.rowCount() - 1:
             self.pages_view.set_page(previous_row)
         else:
@@ -634,7 +582,7 @@ class Q2PdfWidget(QWidget):
             self.create_composed_preview(page_number) for page_number in range(self.composed_pdf.page_count)
         ]
         self.composed_pages_model.refresh()
-        self.composed_pages_view.resize_to_content()
+        self.resize_composed_pages_view()
 
         if preview_row is not None:
             self._preview_row = None
@@ -672,8 +620,7 @@ class Q2PdfWidget(QWidget):
             self.create_composed_preview(page_number) for page_number in range(self.composed_pdf.page_count)
         ]
         self.composed_pages_model.refresh()
-        self.composed_pages_view.resize_to_content()
-        self.composed_page_count_label.setText(f"Result PDF ({self.composed_pdf.page_count} pages)")
+        self.resize_composed_pages_view()
 
         self._preview_row = None
         if self.composed_pdf.page_count:
@@ -700,8 +647,7 @@ class Q2PdfWidget(QWidget):
         preview = self.create_composed_preview(self.composed_pdf.page_count - 1)
         self.composed_preview_pages.append(preview)
         self.composed_pages_model.refresh()
-        self.composed_pages_view.resize_to_content()
-        self.composed_page_count_label.setText(f"Result PDF ({self.composed_pdf.page_count} pages)")
+        self.resize_composed_pages_view()
 
     def add_source_page(self, row):
         if self.pdf is None or row < 0 or row >= self.pdf.page_count:
@@ -724,6 +670,11 @@ class Q2PdfWidget(QWidget):
         painter.drawText(QRectF(preview.rect()), Qt.AlignmentFlag.AlignCenter, f"{page_number + 1}")
         painter.end()
         return preview
+
+    def resize_composed_pages_view(self, minimum_width=None):
+        if minimum_width is None:
+            minimum_width = self.pages_view.width()
+        self.composed_pages_view.resize_to_content(minimum_width)
 
     def get_page_count(self):
         return self.pages_view.model().rowCount()
