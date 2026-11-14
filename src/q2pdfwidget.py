@@ -607,17 +607,32 @@ class Q2PdfWidget(QWidget):
             return None
         return file_name
 
+    def is_composed_pages_drop_target(self, watched):
+        return isinstance(watched, QWidget) and (
+            watched is self.composed_pages_view or self.composed_pages_view.isAncestorOf(watched)
+        )
+
     def eventFilter(self, watched, event):
         if event.type() in (QEvent.Type.DragEnter, QEvent.Type.DragMove):
             if self.dropped_pdf_path(event.mimeData()):
-                QToolTip.showText(QCursor.pos(), "Open", self)
+                tooltip = (
+                    "Open and add all pages"
+                    if self.is_composed_pages_drop_target(watched)
+                    else "Open"
+                )
+                QToolTip.showText(QCursor.pos(), tooltip, self)
                 event.acceptProposedAction()
                 return True
         elif event.type() == QEvent.Type.Drop:
             file_name = self.dropped_pdf_path(event.mimeData())
             if file_name:
                 try:
-                    self.pdf_file = file_name
+                    if self.is_composed_pages_drop_target(watched):
+                        if self._load_pdf_file(file_name, reopen_on_error=False):
+                            self.source_pages_view.selectAll()
+                            self.add_selected_pages()
+                    else:
+                        self.pdf_file = file_name
                 except (fitz.mupdf.FzErrorBase, OSError, RuntimeError, ValueError) as error:
                     QMessageBox.critical(self, "Open failed", f"Could not open PDF:\n{error}")
                 finally:
@@ -648,12 +663,16 @@ class Q2PdfWidget(QWidget):
 
     @pdf_file.setter
     def pdf_file(self, value):
+        self._load_pdf_file(value, reopen_on_error=True)
+
+    def _load_pdf_file(self, value, reopen_on_error):
         try:
             new_pdf = fitz.open(value) if value else None
         except (fitz.mupdf.FzErrorBase, OSError, RuntimeError, ValueError) as error:
             QMessageBox.critical(self, "Open failed", f"Could not open PDF:\n{error}")
-            self.open_file()
-            return
+            if reopen_on_error:
+                self.open_file()
+            return False
         old_pdf = self.pdf
         self.pdf = new_pdf
         self._pdf_file = value or None
@@ -683,6 +702,7 @@ class Q2PdfWidget(QWidget):
             self.file_name_label.setText(os.path.abspath(value))
         if old_pdf is not None:
             old_pdf.close()
+        return True
 
     def get_page_image(self, page_number, dpi=None, QImage=None, QPixmap=None, document=None):
         if dpi is None:
