@@ -37,10 +37,13 @@ from PyQt6.QtGui import (
     QPainter,
     QColor,
     QFont,
+    QIcon,
 )
+from PyQt6.QtSvg import QSvgRenderer
 from PyQt6.QtCore import (
     Qt,
     QAbstractTableModel,
+    QByteArray,
     QEvent,
     QMimeData,
     QModelIndex,
@@ -49,6 +52,51 @@ from PyQt6.QtCore import (
     QSize,
     pyqtSignal,
 )
+
+
+class ComposerToolButton(QToolButton):
+    SVG_ICONS = {
+        "first": '<path d="M5 4v16M19 5l-8 7 8 7"/>',
+        "previous": '<path d="M17 5l-8 7 8 7"/>',
+        "next": '<path d="M7 5l8 7-8 7"/>',
+        "last": '<path d="M19 4v16M6 5l8 7-8 7"/>',
+        "rotate": '<path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" /><path d="M21 3v5h-5" />',
+        "add": '<path d="M12 5v14M5 12h14"/>',
+        "remove": '<path d="M5 12h14"/>',
+        "save": '<path d="M12 3v12m0 0 5-5m-5 5-5-5M5 19v2h14v-2"/>',
+        "open": '<path d="M3 7h7l2 2h9v11H3zM12 14h5m0 0-2-2m2 2-2 2"/>',
+    }
+
+    def __init__(self, text, icon_name, parent=None):
+        super().__init__(parent)
+        svg = (
+            '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">'
+            '<g fill="none" stroke="#394552" stroke-width="2" stroke-linecap="round" '
+            f'stroke-linejoin="round">{self.SVG_ICONS[icon_name]}</g></svg>'
+        )
+        renderer = QSvgRenderer(QByteArray(svg.encode("utf-8")))
+        icon_pixmap = QPixmap(24, 24)
+        icon_pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(icon_pixmap)
+        renderer.render(painter)
+        painter.end()
+
+        if text:
+            self.setText(text)
+            self.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+            self.setFixedHeight(32)
+        else:
+            self.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+            self.setFixedSize(32, 32)
+        self.setIcon(QIcon(icon_pixmap))
+        self.setIconSize(QSize(18, 18))
+        # self.setStyleSheet(
+        #     "QToolButton { padding: 4px 7px; border: 1px solid #c7c7c7; "
+        #     "border-radius: 3px; background-color: #f3f3f3; }"
+        #     "QToolButton:hover { background-color: #e5e5e5; }"
+        #     "QToolButton:pressed { background-color: #d7d7d7; }"
+        #     "QToolButton:disabled { color: #888; }"
+        # )
 
 
 class PagesModel(QAbstractTableModel):
@@ -397,13 +445,11 @@ class Q2PdfWidget(QWidget):
 
         self.preview_source_label = QLabel("Preview")
 
-        self.first_page_button = QToolButton()
-        self.first_page_button.setText("❘◀")
+        self.first_page_button = ComposerToolButton("", "first")
         self.first_page_button.setToolTip("First page")
         self.first_page_button.clicked.connect(lambda: self.go_to_preview_page(0))
 
-        self.previous_page_button = QToolButton()
-        self.previous_page_button.setText("◀")
+        self.previous_page_button = ComposerToolButton("", "previous")
         self.previous_page_button.setToolTip("Previous page")
         self.previous_page_button.clicked.connect(lambda: self.next_preview_page(-1))
 
@@ -413,44 +459,38 @@ class Q2PdfWidget(QWidget):
         self.page_number_input.setMinimumWidth(75)
         self.page_number_input.valueChanged.connect(self.go_to_page_number)
 
-        self.next_page_button = QToolButton()
-        self.next_page_button.setText("▶")
+        self.next_page_button = ComposerToolButton("", "next")
         self.next_page_button.setToolTip("Next page")
         self.next_page_button.clicked.connect(lambda: self.next_preview_page(1))
 
-        self.last_page_button = QToolButton()
-        self.last_page_button.setText("▶❘")
+        self.last_page_button = ComposerToolButton("", "last")
         self.last_page_button.setToolTip("Last page")
         self.last_page_button.clicked.connect(self.go_to_last_preview_page)
 
-        self.rotate_page_button = QToolButton()
-        self.rotate_page_button.setText("↻")
+        self.rotate_page_button = ComposerToolButton("", "rotate")
         self.rotate_page_button.setToolTip("Rotate page clockwise")
         self.rotate_page_button.clicked.connect(self.rotate_preview_page)
 
-        navigation_font = self.first_page_button.font()
-        navigation_font.setPointSize(navigation_font.pointSize() + 6)
-        for button in (
-            self.first_page_button,
-            self.previous_page_button,
-            self.next_page_button,
-            self.last_page_button,
-            self.rotate_page_button,
-        ):
-            button.setFont(navigation_font)
+        # navigation_font = self.first_page_button.font()
+        # navigation_font.setPointSize(navigation_font.pointSize() + 6)
+        # for button in (
+        #     self.first_page_button,
+        #     self.previous_page_button,
+        #     self.next_page_button,
+        #     self.last_page_button,
+        #     self.rotate_page_button,
+        # ):
+        #     button.setFont(navigation_font)
 
-        self.add_page_button = QToolButton()
-        self.add_page_button.setText("Add page")
+        self.add_page_button = ComposerToolButton("Add page", "add")
         self.add_page_button.setEnabled(False)
         self.add_page_button.clicked.connect(self.add_current_page)
 
-        self.remove_page_button = QToolButton()
-        self.remove_page_button.setText("Remove page")
+        self.remove_page_button = ComposerToolButton("Remove page", "remove")
         self.remove_page_button.setEnabled(False)
         self.remove_page_button.clicked.connect(self.remove_current_page)
 
-        self.save_result_button = QToolButton()
-        self.save_result_button.setText("Save result")
+        self.save_result_button = ComposerToolButton("Save result", "save")
         self.save_result_button.setEnabled(False)
         self.save_result_button.clicked.connect(self.save_result)
 
@@ -535,8 +575,7 @@ class Q2PdfWidget(QWidget):
     def get_toolbar(self):
         toolbar_frame = self.get_frame()
 
-        self.open_file_button = QToolButton()
-        self.open_file_button.setText("Open")
+        self.open_file_button = ComposerToolButton("Open", "open")
         self.open_file_button.clicked.connect(self.open_file)
         self.open_file_button.setToolTip("Open source PDF")
 
@@ -773,8 +812,7 @@ class Q2PdfWidget(QWidget):
             page = document.load_page(row)
             page.set_rotation((page.rotation + 90) % 360)
             self.composed_preview_pages[:] = [
-                self.create_composed_preview(page_number)
-                for page_number in range(document.page_count)
+                self.create_composed_preview(page_number) for page_number in range(document.page_count)
             ]
             self.composed_pages_model.refresh()
             self.resize_composed_pages_view()
@@ -930,8 +968,8 @@ class Q2PdfWidget(QWidget):
 
 if __name__ == "__main__":
     app = QApplication([])
-    # pdf_widget = Q2PdfWidget(source_file="data/Scannen0003.pdf", dpi=600)
-    pdf_widget = Q2PdfWidget(dpi=150)
+    pdf_widget = Q2PdfWidget(source_file="data/Scannen0003.pdf", dpi=150)
+    # pdf_widget = Q2PdfWidget(dpi=150)
     pdf_widget.preview_dpi = 10
     pdf_widget.resize(1000, 1000)
     pdf_widget.move(100, 100)
