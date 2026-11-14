@@ -36,7 +36,7 @@ from PyQt6.QtGui import (
     QWheelEvent,
     QPainter,
 )
-from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex, QVariant, QRectF, pyqtSignal
+from PyQt6.QtCore import Qt, QAbstractTableModel, QMimeData, QModelIndex, QVariant, QRectF, pyqtSignal
 
 INCH = 2.54
 
@@ -51,9 +51,13 @@ def open_document(folder):
 
 
 class PagesModel(QAbstractTableModel):
-    def __init__(self, preview_pages):
+    rows_reordered = pyqtSignal(int, int)
+    PAGE_ROW_MIME_TYPE = "application/x-pdf-composer-page-row"
+
+    def __init__(self, preview_pages, allow_reordering=False):
         super().__init__()
         self.preview_pages = preview_pages
+        self.allow_reordering = allow_reordering
 
     def rowCount(self, parent=None):
         return len(self.preview_pages)
@@ -78,6 +82,80 @@ class PagesModel(QAbstractTableModel):
     def refresh(self):
         self.beginResetModel()
         self.endResetModel()
+
+    def flags(self, index):
+        flags = super().flags(index)
+        if self.allow_reordering:
+            flags |= Qt.ItemFlag.ItemIsDropEnabled
+            if index.isValid():
+                flags |= Qt.ItemFlag.ItemIsDragEnabled
+        return flags
+
+    def mimeTypes(self):
+        return [self.PAGE_ROW_MIME_TYPE]
+
+    def mimeData(self, indexes):
+        mime_data = QMimeData()
+        rows = {index.row() for index in indexes if index.isValid()}
+        if self.allow_reordering and len(rows) == 1:
+            mime_data.setData(self.PAGE_ROW_MIME_TYPE, str(rows.pop()).encode("ascii"))
+        return mime_data
+
+    def supportedDropActions(self):
+        return Qt.DropAction.MoveAction
+
+    def dropMimeData(self, mime_data, action, row, column, parent):
+        if action == Qt.DropAction.IgnoreAction:
+            return True
+        if (
+            not self.allow_reordering
+            or action != Qt.DropAction.MoveAction
+            or not mime_data.hasFormat(self.PAGE_ROW_MIME_TYPE)
+        ):
+            return False
+
+        try:
+            source_row = int(bytes(mime_data.data(self.PAGE_ROW_MIME_TYPE)).decode("ascii"))
+        except ValueError:
+            return False
+        if row >= 0:
+            destination_child = row
+        elif parent.isValid():
+            destination_child = parent.row()
+            if source_row < destination_child:
+                destination_child += 1
+        else:
+            destination_child = self.rowCount()
+        return self.moveRows(QModelIndex(), source_row, 1, QModelIndex(), destination_child)
+
+    def moveRows(self, source_parent, source_row, count, destination_parent, destination_child):
+        if (
+            not self.allow_reordering
+            or source_parent.isValid()
+            or destination_parent.isValid()
+            or count != 1
+            or source_row < 0
+            or source_row >= self.rowCount()
+            or destination_child < 0
+            or destination_child > self.rowCount()
+            or source_row <= destination_child <= source_row + count
+        ):
+            return False
+
+        if not self.beginMoveRows(
+            source_parent,
+            source_row,
+            source_row + count - 1,
+            destination_parent,
+            destination_child,
+        ):
+            return False
+        moved_page = self.preview_pages.pop(source_row)
+        destination_row = destination_child - count if destination_child > source_row else destination_child
+        self.preview_pages.insert(destination_row, moved_page)
+        self.endMoveRows()
+        self.rows_reordered.emit(source_row, destination_row)
+        return True
 
 
 class PdfPagesPreview(QTableView):
@@ -266,8 +344,16 @@ class Q2PdfWidget(QWidget):
 
         self.composed_pages_view = PdfPagesPreview()
         self.composed_pages_view.row_selected.connect(self.preview_composed_page_changed)
-        self.composed_pages_model = PagesModel(self.composed_preview_pages)
+        self.composed_pages_model = PagesModel(self.composed_preview_pages, allow_reordering=True)
+        self.composed_pages_model.rows_reordered.connect(self.reorder_composed_pages)
         self.composed_pages_view.setModel(self.composed_pages_model)
+        self.composed_pages_view.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.composed_pages_view.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
+        self.composed_pages_view.setDragEnabled(True)
+        self.composed_pages_view.setAcceptDrops(True)
+        self.composed_pages_view.setDropIndicatorShown(True)
+        self.composed_pages_view.setDefaultDropAction(Qt.DropAction.MoveAction)
+        self.composed_pages_view.setDragDropOverwriteMode(False)
         self.composed_pages_view.clicked.connect(
             lambda index: self.preview_composed_page_changed(index.row())
         )
@@ -503,6 +589,34 @@ class Q2PdfWidget(QWidget):
             self.composed_pages_view.next_page(page)
         else:
             self.pages_view.next_page(page)
+
+    def reorder_composed_pages(self, source_row, destination_row):
+        document_destination = destination_row
+        if destination_row > source_row:
+            document_destination += 1
+            if document_destination == self.composed_pdf.page_count:
+                document_destination = -1
+        self.composed_pdf.move_page(source_row, document_destination)
+
+        preview_row = None
+        if self._previewing_result and self._preview_row is not None:
+            preview_row = self._preview_row
+            if preview_row == source_row:
+                preview_row = destination_row
+            elif source_row < destination_row and source_row < preview_row <= destination_row:
+                preview_row -= 1
+            elif destination_row < source_row and destination_row <= preview_row < source_row:
+                preview_row += 1
+
+        self.composed_preview_pages[:] = [
+            self.create_composed_preview(page_number) for page_number in range(self.composed_pdf.page_count)
+        ]
+        self.composed_pages_model.refresh()
+        self.composed_pages_view.resize_to_content()
+
+        if preview_row is not None:
+            self._preview_row = None
+            self.composed_pages_view.set_page(preview_row)
 
     def save_result(self):
         if self.composed_pdf.page_count == 0:
