@@ -168,10 +168,14 @@ class PdfPagesPreview(QTableView):
     row_selected = pyqtSignal(int)
     preview_dpi_changed = pyqtSignal(int)
     content_width_changed = pyqtSignal(int)
+    add_page_requested = pyqtSignal()
+    remove_page_requested = pyqtSignal()
 
     def __init__(self):
         super().__init__()
         self.minimum_content_width = 0
+        self.add_page_on_keypress = False
+        self.remove_page_on_keypress = False
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         # self.setShowGrid(False)
@@ -209,6 +213,22 @@ class PdfPagesPreview(QTableView):
     def currentChanged(self, current: QModelIndex, previous: QModelIndex):
         self.row_selected.emit(current.row())
         return super().currentChanged(current, previous)
+
+    def keyPressEvent(self, event: QKeyEvent):
+        if self.add_page_on_keypress and event.key() in (
+            Qt.Key.Key_Space,
+            Qt.Key.Key_Enter,
+            Qt.Key.Key_Return,
+            Qt.Key.Key_Plus,
+        ):
+            self.add_page_requested.emit()
+            event.accept()
+            return
+        if self.remove_page_on_keypress and event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Minus):
+            self.remove_page_requested.emit()
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     def get_selected_rows(self):
         return [x.row() for x in self.selectionModel().selectedRows() if not self.isRowHidden(x.row())]
@@ -254,14 +274,10 @@ class PageView(QGraphicsView):
         self.update_drag_mode()
 
     def update_drag_mode(self):
-        has_scrollbar = (
-            self.horizontalScrollBar().isVisible() or self.verticalScrollBar().isVisible()
-        )
+        has_scrollbar = self.horizontalScrollBar().isVisible() or self.verticalScrollBar().isVisible()
         if has_scrollbar != self.drag_mode:
             self.setDragMode(
-                QGraphicsView.DragMode.ScrollHandDrag
-                if has_scrollbar
-                else QGraphicsView.DragMode.NoDrag
+                QGraphicsView.DragMode.ScrollHandDrag if has_scrollbar else QGraphicsView.DragMode.NoDrag
             )
             self.drag_mode = has_scrollbar
 
@@ -343,15 +359,21 @@ class Q2PdfWidget(QWidget):
         self.main_layout.setContentsMargins(*self.layoutMargins)
         self.setLayout(self.main_layout)
 
-        self.pages_view = PdfPagesPreview()
-        self.pages_view.row_selected.connect(self.preview_page_changed)
-        self.pages_model = PagesModel(self.preview_pages)
-        self.pages_view.setModel(self.pages_model)
-        self.pages_view.clicked.connect(lambda index: self.preview_page_changed(index.row()))
-        self.pages_view.doubleClicked.connect(lambda index: self.add_source_page(index.row()))
-        self.pages_view.setToolTip("Double-click a page to add it to the result")
+        self.source_pages_view = PdfPagesPreview()
+        self.source_pages_view.add_page_on_keypress = True
+        self.source_pages_view.add_page_requested.connect(self.add_current_page)
+        self.source_pages_view.row_selected.connect(self.preview_page_changed)
+        self.source_pages_model = PagesModel(self.preview_pages)
+        self.source_pages_view.setModel(self.source_pages_model)
+        self.source_pages_view.clicked.connect(lambda index: self.preview_page_changed(index.row()))
+        self.source_pages_view.doubleClicked.connect(lambda index: self.add_source_page(index.row()))
+        self.source_pages_view.setToolTip(
+            "Double-click a page or press Space, Enter, or + to add it to the result"
+        )
 
         self.composed_pages_view = PdfPagesPreview()
+        self.composed_pages_view.remove_page_on_keypress = True
+        self.composed_pages_view.remove_page_requested.connect(self.remove_current_page)
         self.composed_pages_view.row_selected.connect(self.preview_composed_page_changed)
         self.composed_pages_model = PagesModel(self.composed_preview_pages, allow_reordering=True)
         self.composed_pages_model.rows_reordered.connect(self.reorder_composed_pages)
@@ -363,7 +385,7 @@ class Q2PdfWidget(QWidget):
         self.composed_pages_view.setDropIndicatorShown(True)
         self.composed_pages_view.setDefaultDropAction(Qt.DropAction.MoveAction)
         self.composed_pages_view.setDragDropOverwriteMode(False)
-        self.pages_view.content_width_changed.connect(self.resize_composed_pages_view)
+        self.source_pages_view.content_width_changed.connect(self.resize_composed_pages_view)
         self.composed_pages_view.clicked.connect(
             lambda index: self.preview_composed_page_changed(index.row())
         )
@@ -442,7 +464,7 @@ class Q2PdfWidget(QWidget):
         source_layout = QVBoxLayout(source_frame)
         source_layout.setContentsMargins(0, 0, 0, 0)
         source_layout.addWidget(QLabel("Source PDF"))
-        source_layout.addWidget(self.pages_view, stretch=2)
+        source_layout.addWidget(self.source_pages_view, stretch=2)
         work_layout.addWidget(source_frame, stretch=2)
 
         preview_frame = QWidget()
@@ -460,8 +482,9 @@ class Q2PdfWidget(QWidget):
 
         page_navigation_frame = QWidget()
         page_navigation_layout = QHBoxLayout(page_navigation_frame)
-        page_navigation_layout.setContentsMargins(*self.layoutMargins)
+        page_navigation_layout.setContentsMargins(0, 0, 0, 0)
         page_navigation_layout.setSpacing(2)
+
         page_navigation_layout.addStretch(1)
         page_navigation_layout.addWidget(self.first_page_button)
         page_navigation_layout.addWidget(self.previous_page_button)
@@ -484,7 +507,7 @@ class Q2PdfWidget(QWidget):
         for child in self.findChildren(QWidget):
             child.setAcceptDrops(True)
             child.installEventFilter(self)
-        self.pages_view.preview_dpi_changed.connect(self.preview_dpi_changed)
+        self.source_pages_view.preview_dpi_changed.connect(self.preview_dpi_changed)
         self.update_page_navigation()
         if source_file:
             self.pdf_file = source_file
@@ -584,11 +607,11 @@ class Q2PdfWidget(QWidget):
         self.result_data = None
         if self.pdf is None:
             self.preview_pages.clear()
-            self.pages_model.refresh()
-            self.pages_view.resize_to_content()
+            self.source_pages_model.refresh()
+            self.source_pages_view.resize_to_content()
             self.resize_composed_pages_view()
-            self.pages_view.clearSelection()
-            self.pages_view.setCurrentIndex(QModelIndex())
+            self.source_pages_view.clearSelection()
+            self.source_pages_view.setCurrentIndex(QModelIndex())
             self.add_page_button.setEnabled(False)
             self.remove_page_button.setEnabled(False)
             self.preview_source_label.setText("Preview")
@@ -597,7 +620,7 @@ class Q2PdfWidget(QWidget):
             self.file_name_label.clear()
         else:
             self.refresh_pages_view()
-            self.pages_view.set_page(0)
+            self.source_pages_view.set_page(0)
             if self.pdf.page_count:
                 self.preview_page_changed(0)
                 self.page_view.fit_page()
@@ -634,8 +657,8 @@ class Q2PdfWidget(QWidget):
     def refresh_pages_view(self):
         self.preview_pages.clear()
         if self.pdf is None:
-            self.pages_model.refresh()
-            self.pages_view.resize_to_content()
+            self.source_pages_model.refresh()
+            self.source_pages_view.resize_to_content()
             self.resize_composed_pages_view()
             self.update_page_navigation()
             return
@@ -651,14 +674,14 @@ class Q2PdfWidget(QWidget):
             self.preview_pages[key] = pix
 
         self.preview_pages.update()
-        previous_row = self.pages_view.currentIndex().row()
-        self.pages_model.refresh()
-        self.pages_view.resize_to_content()
+        previous_row = self.source_pages_view.currentIndex().row()
+        self.source_pages_model.refresh()
+        self.source_pages_view.resize_to_content()
         self.resize_composed_pages_view()
-        if previous_row >= 0 and previous_row < self.pages_model.rowCount() - 1:
-            self.pages_view.set_page(previous_row)
+        if previous_row >= 0 and previous_row < self.source_pages_model.rowCount() - 1:
+            self.source_pages_view.set_page(previous_row)
         else:
-            self.pages_view.set_page(0)
+            self.source_pages_view.set_page(0)
 
     def preview_page_changed(self, row):
         if row < 0 or self.pdf is None or row >= self.pdf.page_count:
@@ -683,7 +706,7 @@ class Q2PdfWidget(QWidget):
         self._preview_row = row
         self.add_page_button.setEnabled(False)
         self.remove_page_button.setEnabled(True)
-        self.pages_view.clearSelection()
+        self.source_pages_view.clearSelection()
         self.preview_source_label.setText(f"Result PDF — page {row + 1} of {self.composed_pdf.page_count}")
         self.page_view.set_image(
             self.get_page_image(
@@ -727,7 +750,7 @@ class Q2PdfWidget(QWidget):
                 self.composed_pages_view.set_page(row)
                 self.preview_composed_page_changed(row)
         elif self.pdf is not None and 0 <= row < self.pdf.page_count:
-            self.pages_view.set_page(row)
+            self.source_pages_view.set_page(row)
             self.preview_page_changed(row)
 
     def go_to_last_preview_page(self):
@@ -808,7 +831,7 @@ class Q2PdfWidget(QWidget):
         if self.composed_pdf.page_count:
             self.composed_pages_view.set_page(min(row, self.composed_pdf.page_count - 1))
         else:
-            source_row = self.pages_view.currentIndex().row()
+            source_row = self.source_pages_view.currentIndex().row()
             if self.pdf is not None and 0 <= source_row < self.pdf.page_count:
                 self.preview_page_changed(source_row)
             else:
@@ -821,7 +844,7 @@ class Q2PdfWidget(QWidget):
     def add_current_page(self):
         if self._previewing_result:
             return
-        row = self.pages_view.currentIndex().row()
+        row = self.source_pages_view.currentIndex().row()
         if self.pdf is None or row < 0 or row >= self.pdf.page_count:
             return
 
@@ -835,7 +858,7 @@ class Q2PdfWidget(QWidget):
     def add_source_page(self, row):
         if self.pdf is None or row < 0 or row >= self.pdf.page_count:
             return
-        self.pages_view.set_page(row)
+        self.source_pages_view.set_page(row)
         self.preview_page_changed(row)
         self.add_current_page()
 
@@ -856,19 +879,20 @@ class Q2PdfWidget(QWidget):
 
     def resize_composed_pages_view(self, minimum_width=None):
         if minimum_width is None:
-            minimum_width = self.pages_view.width()
+            minimum_width = self.source_pages_view.width()
         self.composed_pages_view.resize_to_content(minimum_width)
 
     def get_page_count(self):
-        return self.pages_view.model().rowCount()
+        return self.source_pages_view.model().rowCount()
 
     def get_selected_pages(self):
-        return self.pages_view.get_selected_rows()
+        return self.source_pages_view.get_selected_rows()
 
 
 if __name__ == "__main__":
     app = QApplication([])
-    pdf_widget = Q2PdfWidget(source_file="data/Scannen0003.pdf", dpi=600)
+    # pdf_widget = Q2PdfWidget(source_file="data/Scannen0003.pdf", dpi=600)
+    pdf_widget = Q2PdfWidget(dpi=150)
     pdf_widget.preview_dpi = 10
     pdf_widget.resize(1000, 1000)
     pdf_widget.move(100, 100)
