@@ -223,7 +223,7 @@ class PageView(QGraphicsView):
 
 
 class Q2PdfWidget(QWidget):
-    ocr_job_done = pyqtSignal(str)
+
     def __init__(self, ocr_progress_callback=None, dpi=300):
         super().__init__()
 
@@ -276,10 +276,16 @@ class Q2PdfWidget(QWidget):
         self.page_view.next_page.connect(self.next_preview_page)
 
         self.preview_source_label = QLabel("Preview")
+
         self.add_page_button = QToolButton()
         self.add_page_button.setText("Add page")
         self.add_page_button.setEnabled(False)
         self.add_page_button.clicked.connect(self.add_current_page)
+
+        self.remove_page_button = QToolButton()
+        self.remove_page_button.setText("Remove page")
+        self.remove_page_button.setEnabled(False)
+        self.remove_page_button.clicked.connect(self.remove_current_page)
 
         work_frame = QWidget()
         work_layout = QHBoxLayout(work_frame)
@@ -303,8 +309,16 @@ class Q2PdfWidget(QWidget):
         preview_layout.setContentsMargins(1, 1, 1, 1)
         preview_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         preview_layout.addWidget(self.preview_source_label)
+
+        buttons_frame = QWidget()
+        buttons_layout = QHBoxLayout(buttons_frame)
+        buttons_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        buttons_layout.setContentsMargins(1, 1, 1, 1)
+        buttons_layout.addWidget(self.add_page_button)
+        buttons_layout.addWidget(self.remove_page_button)
+
+        preview_layout.addWidget(buttons_frame, stretch=0)
         preview_layout.addWidget(self.page_view, stretch=1)
-        preview_layout.addWidget(self.add_page_button)
 
         doc_layout.addWidget(work_frame, stretch=0)
         doc_layout.addWidget(preview_frame, stretch=1)
@@ -361,7 +375,7 @@ class Q2PdfWidget(QWidget):
         self.file_name_label = QLabel()
 
         toolbar_frame.layout().addWidget(self.open_file_button)
-        toolbar_frame.layout().addWidget(QLabel("Source file"))
+        toolbar_frame.layout().addWidget(QLabel("Source file:"))
         toolbar_frame.layout().addWidget(self.file_name_label)
         return toolbar_frame
 
@@ -448,10 +462,9 @@ class Q2PdfWidget(QWidget):
         self._previewing_result = False
         self._preview_row = row
         self.add_page_button.setEnabled(True)
+        self.remove_page_button.setEnabled(False)
         self.composed_pages_view.clearSelection()
-        self.preview_source_label.setText(
-            f"Source PDF — page {row + 1} of {self.q2ocr.pdf.page_count}"
-        )
+        self.preview_source_label.setText(f"Source PDF — page {row + 1} of {self.q2ocr.pdf.page_count}")
         self.page_view.set_image(self.q2ocr.get_page_image(row, QImage=QImage, QPixmap=QPixmap))
         # image = QImage()
         # image.loadFromData(self.q2ocr.get_page_image(row))
@@ -465,10 +478,9 @@ class Q2PdfWidget(QWidget):
         self._previewing_result = True
         self._preview_row = row
         self.add_page_button.setEnabled(False)
+        self.remove_page_button.setEnabled(True)
         self.pages_view.clearSelection()
-        self.preview_source_label.setText(
-            f"Result PDF — page {row + 1} of {self.composed_pdf.page_count}"
-        )
+        self.preview_source_label.setText(f"Result PDF — page {row + 1} of {self.composed_pdf.page_count}")
         self.page_view.set_image(
             self.q2ocr.get_page_image(
                 row,
@@ -485,6 +497,33 @@ class Q2PdfWidget(QWidget):
         else:
             self.pages_view.next_page(page)
 
+    def remove_current_page(self):
+        row = self._preview_row
+        if not self._previewing_result or row is None or row < 0 or row >= self.composed_pdf.page_count:
+            return
+
+        self.composed_pdf.delete_page(row)
+        self.composed_preview_pages[:] = [
+            self.create_composed_preview(page_number)
+            for page_number in range(self.composed_pdf.page_count)
+        ]
+        self.composed_pages_model.refresh()
+        self.composed_pages_view.resize_to_content()
+        self.composed_page_count_label.setText(f"Result PDF ({self.composed_pdf.page_count} pages)")
+
+        self._preview_row = None
+        if self.composed_pdf.page_count:
+            self.composed_pages_view.set_page(min(row, self.composed_pdf.page_count - 1))
+        else:
+            source_row = self.pages_view.currentIndex().row()
+            if self.q2ocr.pdf is not None and 0 <= source_row < self.q2ocr.pdf.page_count:
+                self.preview_page_changed(source_row)
+            else:
+                self._previewing_result = False
+                self.remove_page_button.setEnabled(False)
+                self.preview_source_label.setText("Preview")
+                self.page_view.set_image(QPixmap())
+
     def add_current_page(self):
         if self._previewing_result:
             return
@@ -493,26 +532,26 @@ class Q2PdfWidget(QWidget):
             return
 
         self.composed_pdf.insert_pdf(self.q2ocr.pdf, from_page=row, to_page=row)
-        image = QImage()
-        if not image.loadFromData(self.q2ocr.get_page_image(row, self.preview_dpi)):
-            raise RuntimeError(f"Unable to render PDF page {row + 1}")
-        preview = QPixmap.fromImage(image)
-
-        painter = QPainter(preview)
-        font = painter.font()
-        font.setPointSize(self.preview_dpi)
-        painter.setFont(font)
-        painter.drawText(
-            QRectF(preview.rect()),
-            Qt.AlignmentFlag.AlignCenter,
-            f"{self.composed_pdf.page_count}",
-        )
-        painter.end()
-
+        preview = self.create_composed_preview(self.composed_pdf.page_count - 1)
         self.composed_preview_pages.append(preview)
         self.composed_pages_model.refresh()
         self.composed_pages_view.resize_to_content()
         self.composed_page_count_label.setText(f"Result PDF ({self.composed_pdf.page_count} pages)")
+
+    def create_composed_preview(self, page_number):
+        image = QImage()
+        if not image.loadFromData(
+            self.q2ocr.get_page_image(page_number, self.preview_dpi, document=self.composed_pdf)
+        ):
+            raise RuntimeError(f"Unable to render result page {page_number + 1}")
+        preview = QPixmap.fromImage(image)
+        painter = QPainter(preview)
+        font = painter.font()
+        font.setPointSize(self.preview_dpi)
+        painter.setFont(font)
+        painter.drawText(QRectF(preview.rect()), Qt.AlignmentFlag.AlignCenter, f"{page_number + 1}")
+        painter.end()
+        return preview
 
     def get_page_count(self):
         return self.pages_view.model().rowCount()
@@ -526,13 +565,8 @@ if __name__ == "__main__":
     ocr_widget = Q2PdfWidget(dpi=600)
     ocr_widget.pdf_file = "data/Scannen0003.pdf"
     ocr_widget.preview_dpi = 10
-    ocr_widget.ocr_job_done.connect(lambda arg: print(arg, ocr_widget.result_data))
     ocr_widget.resize(1000, 1000)
     ocr_widget.move(100, 100)
     ocr_widget.show()
     app.exec()
-    print(ocr_widget.result_data)
-    print(ocr_widget.get_lines())
-    if ocr_widget.result_data:
-        open_document(ocr_widget.result_data)
     sys.exit(0)
