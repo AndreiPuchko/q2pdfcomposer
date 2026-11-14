@@ -240,6 +240,7 @@ class PageView(QGraphicsView):
     def set_image(self, pixmap):
         self.pdf_image.setPixmap(pixmap)
         self.setSceneRect(self.pdf_image.boundingRect())
+        self.update_drag_mode()
 
     def showEvent(self, event: QShowEvent) -> None:
         super().showEvent(event)
@@ -250,6 +251,19 @@ class PageView(QGraphicsView):
             return
         self.resetTransform()
         self.fitInView(self.pdf_image, Qt.AspectRatioMode.KeepAspectRatio)
+        self.update_drag_mode()
+
+    def update_drag_mode(self):
+        has_scrollbar = (
+            self.horizontalScrollBar().isVisible() or self.verticalScrollBar().isVisible()
+        )
+        if has_scrollbar != self.drag_mode:
+            self.setDragMode(
+                QGraphicsView.DragMode.ScrollHandDrag
+                if has_scrollbar
+                else QGraphicsView.DragMode.NoDrag
+            )
+            self.drag_mode = has_scrollbar
 
     def ensure_minimal_zoom(self):
         tlp = self.mapFromScene(0, 0)
@@ -262,6 +276,7 @@ class PageView(QGraphicsView):
         view_height = self.rect().height()
         if scene_height < view_height and scene_width < view_width:
             self.fitInView(self.pdf_image, Qt.AspectRatioMode.KeepAspectRatio)
+        self.update_drag_mode()
 
     def wheelEvent(self, event: QWheelEvent):
         if QApplication.keyboardModifiers() == Qt.KeyboardModifier.NoModifier:
@@ -387,7 +402,7 @@ class Q2PdfWidget(QWidget):
         self.last_page_button.clicked.connect(self.go_to_last_preview_page)
 
         navigation_font = self.first_page_button.font()
-        navigation_font.setPointSize(navigation_font.pointSize() + 4)
+        navigation_font.setPointSize(navigation_font.pointSize() + 6)
         for button in (
             self.first_page_button,
             self.previous_page_button,
