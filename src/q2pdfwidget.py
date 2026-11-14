@@ -439,6 +439,7 @@ class Q2PdfWidget(QWidget):
         self.composed_pages_view.clicked.connect(
             lambda index: self.preview_composed_page_changed(index.row())
         )
+        self.composed_pages_view.doubleClicked.connect(self.remove_selected_pages)
         self.composed_page_count_label = QLabel("Result PDF")
 
         self.page_view = PageView(self.dpi)
