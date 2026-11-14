@@ -558,6 +558,7 @@ if __name__ == "__main__":
     ocr_widget.show()
     app.exec()
     print(ocr_widget.result_data)
+    print(ocr_widget.get_lines())
     if ocr_widget.result_data:
         open_document(ocr_widget.result_data)
     sys.exit(0)

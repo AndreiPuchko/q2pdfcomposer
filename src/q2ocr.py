@@ -19,6 +19,9 @@ class Q2OCR:
         self.result_data = None
         self.progress_callback = progress_callback
         self.result_mode = result_mode
+        self.psm = 6
+        self.row_top_margin = 3
+        self.row_bottom_margin = 3
 
     @property
     def pdf_file(self):
@@ -105,12 +108,15 @@ class Q2OCR:
                         continue
                     for other_column_row in other_column:
                         if (
-                            other_column_row["top"] >= main_column_row["top"]
-                            and other_column_row["top"] <= main_column_row["bottom"]
+                            other_column_row["top"] >= main_column_row["top"] - self.row_top_margin
+                            and other_column_row["top"] <= main_column_row["bottom"] + self.row_bottom_margin
                         ):
-                            main_column_row[f"other_column_{index}"] = other_column_row["text"]
-                        if f"other_column_{index}" not in main_column_row:
-                            main_column_row[f"other_column_{index}"] = ""
+                            main_column_row[f"column_{index:04}"] = other_column_row["text"]
+                        if f"column_{index:04}" not in main_column_row:
+                            main_column_row[f"column_{index:04}"] = ""
+
+                main_column_row[f"column_{base_column-1:04}"] = main_column_row["text"]
+                del main_column_row["text"]
                 del main_column_row["bottom"]
                 del main_column_row["top"]
             for row in page_result[base_column - 1]:
@@ -152,14 +158,27 @@ class Q2OCR:
                 chunk["pixmap"] = bytes_pixmap
 
                 chunk_data = pytesseract.image_to_data(
-                    im.open(io.BytesIO(bytes_pixmap)), output_type=pytesseract.Output.DICT
+                    im.open(io.BytesIO(bytes_pixmap)),
+                    output_type=pytesseract.Output.DICT,
+                    config=f"--psm {self.psm}",
                 )
                 result[-1].append(chunk_data)
                 chunk["data"] = chunk_data
+                # print(
+                #     pytesseract.image_to_string(
+                #         im.open(io.BytesIO(bytes_pixmap)),
+                #         config=f"--psm {self.psm}",
+                #     )
+                # )
                 debug_data[-1].append(chunk)
 
                 if debug:
-                    ocr_csv_text = str(pytesseract.image_to_data(im.open(io.BytesIO(bytes_pixmap))))
+                    ocr_csv_text = str(
+                        pytesseract.image_to_data(
+                            im.open(io.BytesIO(bytes_pixmap)),
+                            config=f"--psm {self.psm}",
+                        )
+                    )
                     chunk["csv"] = ocr_csv_text
                     open(f"{debug_file_name}.csv", "w").write(ocr_csv_text)
 
@@ -181,7 +200,7 @@ class Q2OCR:
         result_csv_file_name = "temp\\data.csv"
         csv_writer = csv.DictWriter(
             open(result_csv_file_name, "w", encoding="utf-8"),
-            [x for x in table[0]],
+            sorted([x for x in table[0]]),
             dialect="excel",
             lineterminator="\n",
             delimiter=";",
@@ -195,7 +214,34 @@ class Q2OCR:
 
 if __name__ == "__main__":
     ocr = Q2OCR()
-    ocr.pdf_file = "data/Scannen0003.pdf"
+    # ocr.pdf_file = "data/Scannen0003.pdf"
+
+    ocr.pdf_file = (
+        "C:/Users/andre/Desktop/dev/exp/pdf/pdf_mupdf/data/MSA_MD- 11244 - ANAHEIM-SANTA ANA-IRVINE, CA.pdf"
+    )
     ocr.set_tesseract_cmd("C:\\Users\\andre\\Desktop\\pdflabels\\Tesseract-OCR\\tesseract.exe")
     ocr.dpi = 300
-    ocr.ocr(0, lines=[3.1242, 12.2936, 13.656733, 15.206133, 17.873133], row_margin=0.5, aec=99)
+    # ocr.ocr(0, lines=[3.1242, 12.2936, 13.656733, 15.206133, 17.873133], row_margin=0.5, aec=99)
+    ocr.ocr(
+        0,
+        lines=[
+            0.6858,
+            1.913467,
+            3.445933,
+            5.1689,
+            6.8707,
+            9.381067,
+            11.104033,
+            13.6525,
+            15.7607,
+            17.8689,
+            19.947467,
+            22.064133,
+            24.1681,
+            26.1747,
+            28.0035,
+        ],
+        row_margin=0.5,
+        aec=99,
+        base_column=5,
+    )
