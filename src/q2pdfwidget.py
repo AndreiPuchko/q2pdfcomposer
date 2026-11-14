@@ -227,6 +227,12 @@ class PageView(QGraphicsView):
 
     def showEvent(self, event: QShowEvent) -> None:
         super().showEvent(event)
+        self.fit_page()
+
+    def fit_page(self):
+        if self.pdf_image.pixmap().isNull():
+            return
+        self.resetTransform()
         self.fitInView(self.pdf_image, Qt.AspectRatioMode.KeepAspectRatio)
 
     def ensure_minimal_zoom(self):
@@ -376,6 +382,8 @@ class Q2PdfWidget(QWidget):
         self.pages_view.preview_dpi_changed.connect(self.preview_dpi_changed)
         if source_file:
             self.pdf_file = source_file
+        else:
+            self.open_file()
 
     def get_frame(self, orientation=Qt.Orientation.Horizontal):
         frame = QWidget()
@@ -475,6 +483,9 @@ class Q2PdfWidget(QWidget):
         else:
             self.refresh_pages_view()
             self.pages_view.set_page(0)
+            if self.pdf.page_count:
+                self.preview_page_changed(0)
+                self.page_view.fit_page()
             self.add_page_button.setEnabled(self.pdf.page_count > 0)
             self.file_name_label.setText(os.path.abspath(value))
         if old_pdf is not None:
