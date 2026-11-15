@@ -1,5 +1,6 @@
 import sys
 import os
+import math
 
 try:
     import qtpy
@@ -547,7 +548,7 @@ class Q2PdfWidget(QWidget):
         self.save_result_button.clicked.connect(self.save_result)
 
         self.thumbnail_dpi_spinbox = QSpinBox()
-        self.thumbnail_dpi_spinbox.setRange(6, 50)
+        self.thumbnail_dpi_spinbox.setRange(6, 49)
         self.thumbnail_dpi_spinbox.setValue(self.preview_dpi)
         self.thumbnail_dpi_spinbox.setToolTip("Thumbnail rendering DPI")
         self.thumbnail_dpi_spinbox.valueChanged.connect(self.set_preview_dpi)
@@ -630,7 +631,9 @@ class Q2PdfWidget(QWidget):
         if source_file:
             self.pdf_file = source_file
         else:
-            self.open_file()
+            self.resize_source_pages_view()
+            self.resize_composed_pages_view()
+            # self.open_file()
 
     def get_frame(self, orientation=Qt.Orientation.Horizontal):
         frame = QWidget()
@@ -773,7 +776,7 @@ class Q2PdfWidget(QWidget):
         if self.pdf is None:
             self.preview_pages.clear()
             self.source_pages_model.refresh()
-            self.source_pages_view.resize_to_content()
+            self.resize_source_pages_view()
             self.resize_composed_pages_view()
             self.source_pages_view.clearSelection()
             self.source_pages_view.setCurrentIndex(QModelIndex())
@@ -824,7 +827,7 @@ class Q2PdfWidget(QWidget):
         self.preview_pages.clear()
         if self.pdf is None:
             self.source_pages_model.refresh()
-            self.source_pages_view.resize_to_content()
+            self.resize_source_pages_view()
             self.resize_composed_pages_view()
             self.update_page_navigation()
             return
@@ -842,7 +845,7 @@ class Q2PdfWidget(QWidget):
         self.preview_pages.update()
         previous_row = self.source_pages_view.currentIndex().row()
         self.source_pages_model.refresh()
-        self.source_pages_view.resize_to_content()
+        self.resize_source_pages_view()
         self.resize_composed_pages_view()
         if previous_row >= 0 and previous_row < self.source_pages_model.rowCount() - 1:
             self.source_pages_view.set_page(previous_row)
@@ -1133,6 +1136,19 @@ class Q2PdfWidget(QWidget):
         if minimum_width is None:
             minimum_width = self.source_pages_view.width()
         self.composed_pages_view.resize_to_content(minimum_width)
+
+    def resize_source_pages_view(self):
+        if self.pdf is None:
+            a4_width_points, _ = fitz.paper_size("a4")
+            a4_width = math.ceil(a4_width_points * self.preview_dpi / 72)
+            minimum_width = (
+                a4_width
+                + int(PagesModel.THUMBNAIL_SPACING * 1.5)
+                + self.source_pages_view.frameWidth()
+            )
+        else:
+            minimum_width = 0
+        self.source_pages_view.resize_to_content(minimum_width)
 
     def get_page_count(self):
         return self.source_pages_view.model().rowCount()
