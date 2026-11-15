@@ -547,6 +547,19 @@ class Q2PdfWidget(QWidget):
         self.save_result_button.setEnabled(False)
         self.save_result_button.clicked.connect(self.save_result)
 
+        self.thumbnail_dpi_spinbox = QSpinBox()
+        self.thumbnail_dpi_spinbox.setRange(6, 50)
+        self.thumbnail_dpi_spinbox.setValue(self.preview_dpi)
+        self.thumbnail_dpi_spinbox.setToolTip("Thumbnail rendering DPI")
+        self.thumbnail_dpi_spinbox.valueChanged.connect(self.set_preview_dpi)
+
+        self.preview_dpi_spinbox = QSpinBox()
+        self.preview_dpi_spinbox.setRange(100, 1200)
+        self.preview_dpi_spinbox.setValue(self.dpi)
+        self.preview_dpi_spinbox.setSingleStep(50)
+        self.preview_dpi_spinbox.setToolTip("Full-page preview rendering DPI")
+        self.preview_dpi_spinbox.valueChanged.connect(self.preview_render_dpi_changed)
+
         work_frame = QWidget()
         work_layout = QHBoxLayout(work_frame)
         work_layout.setContentsMargins(*self.layoutMargins)
@@ -579,6 +592,10 @@ class Q2PdfWidget(QWidget):
         buttons_layout.addWidget(self.remove_page_button)
         buttons_layout.addWidget(self.save_result_button)
         buttons_layout.addStretch(1)
+        buttons_layout.addWidget(QLabel("Thumbnails DPI:"))
+        buttons_layout.addWidget(self.thumbnail_dpi_spinbox)
+        buttons_layout.addWidget(QLabel("Preview DPI:"))
+        buttons_layout.addWidget(self.preview_dpi_spinbox)
 
         page_navigation_frame = QWidget()
         page_navigation_layout = QHBoxLayout(page_navigation_frame)
@@ -698,10 +715,38 @@ class Q2PdfWidget(QWidget):
         if value <= 5 or value >= 50:
             return
         self._preview_dpi = value
+        if hasattr(self, "thumbnail_dpi_spinbox") and self.thumbnail_dpi_spinbox.value() != value:
+            previous_blocked = self.thumbnail_dpi_spinbox.blockSignals(True)
+            self.thumbnail_dpi_spinbox.setValue(value)
+            self.thumbnail_dpi_spinbox.blockSignals(previous_blocked)
         self.refresh_pages_view()
+        self.composed_preview_pages[:] = [
+            self.create_composed_preview(page_number)
+            for page_number in range(self.composed_pdf.page_count)
+        ]
+        self.composed_pages_model.refresh()
+        self.resize_composed_pages_view()
+
+    def set_preview_dpi(self, value):
+        self.preview_dpi = value
 
     def preview_dpi_changed(self, value):
         self.preview_dpi += value
+
+    def preview_render_dpi_changed(self, value):
+        if value == self.dpi:
+            return
+        self.dpi = value
+        if self._preview_row is None:
+            return
+
+        row = self._preview_row
+        self._preview_row = None
+        if self._previewing_result:
+            self.preview_composed_page_changed(row)
+        else:
+            self.preview_page_changed(row)
+        self.page_view.fit_page()
 
     @property
     def pdf_file(self):
