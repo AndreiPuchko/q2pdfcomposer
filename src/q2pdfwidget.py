@@ -432,7 +432,6 @@ class Q2PdfWidget(QWidget):
         self._preview_dpi = 15
         self._pdf_file = None
         self.pdf = None
-        self.aec = 0
         self.dpi = dpi
 
         self.preview_pages = {}
@@ -625,6 +624,7 @@ class Q2PdfWidget(QWidget):
         for child in self.findChildren(QWidget):
             child.setAcceptDrops(True)
             child.installEventFilter(self)
+        self.composed_pages_view.preview_dpi_changed.connect(self.preview_dpi_changed)
         self.source_pages_view.preview_dpi_changed.connect(self.preview_dpi_changed)
         self.update_page_navigation()
         if source_file:
