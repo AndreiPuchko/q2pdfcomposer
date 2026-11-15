@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "q2pdfcomposer"
+version = "0.0.1"
+description = "PDF Composer"
+readme = "README.md"
+authors = [
+    { name = "Andrei Puchko" }
+]
+requires-python = ">=3.9"
+dependencies = [
+    "pymupdf",
+    "qtpy"
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["q2pdfcomposer*"]
+exclude = ["datasets", "tests"]

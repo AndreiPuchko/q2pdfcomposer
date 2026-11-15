@@ -9,7 +9,7 @@
             "name": "Python Debugger: Current File",
             "type": "debugpy",
             "request": "launch",
-            "program": "src/q2pdfwidget.py",
+            "program": "q2pdfcomposer/__main__.py",
             "console": "integratedTerminal"
         }
     ]

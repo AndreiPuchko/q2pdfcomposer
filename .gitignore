@@ -7,3 +7,4 @@ q2gui.ini
 *.spec
 build/
 dist/
+q2pdfcomposer.egg-info/*

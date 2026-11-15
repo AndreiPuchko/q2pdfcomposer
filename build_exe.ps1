@@ -1,1 +1,1 @@
-pyinstaller --onefile --windowed  .\src\q2pdfwidget.py -n Q2PdfComposer
+pyinstaller --onefile --windowed  q2pdfcomposer\__main__.py -n Q2PdfComposer

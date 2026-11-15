@@ -1,6 +1,5 @@
-import sys
-import os
 import math
+import os
 
 try:
     import qtpy
@@ -14,8 +13,6 @@ if not qtpy.API_NAME:
     raise ImportError(
         "QtPy is installed, but no supported Qt binding is available. Install PyQt6 or PySide6."
     )
-
-import fitz
 
 import qtpy.QtCore as QtCore
 from qtpy.QtWidgets import (
@@ -55,30 +52,32 @@ from qtpy.QtCore import (
     QEvent,
     QMimeData,
     QModelIndex,
-    QVariant,
     QRectF,
     QSize,
 )
 
-Signal = getattr(QtCore, "Signal")
+import pymupdf as fitz
+
+Signal = QtCore.Signal
 
 
 class ComposerToolButton(QToolButton):
-    SVG_ICONS = {
-        "first": '<path d="M5 4v16M19 5l-8 7 8 7"/>',
-        "previous": '<path d="M17 5l-8 7 8 7"/>',
-        "next": '<path d="M7 5l8 7-8 7"/>',
-        "last": '<path d="M19 4v16M6 5l8 7-8 7"/>',
-        "rotate": '<path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" /><path d="M21 3v5h-5" />',
-        "add": '<path d="M12 5v14M5 12h14"/>',
-        "remove": '<path d="M5 12h14"/>',
-        "save": '<path d="M12 3v12m0 0 5-5m-5 5-5-5M5 19v2h14v-2"/>',
-        "open": '<path d="m6 14 1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5c0-1.1.9-2 2-2h3.93a2 2 0 0 1 1.66.9l.82 1.2a2 2 0 0 0 1.66.9H18a2 2 0 0 1 2 2v2" />',
-    }
-
     def __init__(self, text, icon_name, parent=None, primary=False):
         super().__init__(parent)
         icon_color = "#ffffff" if primary else "#394552"
+        self.SVG_ICONS = {
+            "first": '<path d="M5 4v16M19 5l-8 7 8 7"/>',
+            "previous": '<path d="M17 5l-8 7 8 7"/>',
+            "next": '<path d="M7 5l8 7-8 7"/>',
+            "last": '<path d="M19 4v16M6 5l8 7-8 7"/>',
+            "rotate": '<path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" /><path d="M21 3v5h-5" />',
+            "add": '<path d="M12 5v14M5 12h14"/>',
+            "remove": '<path d="M5 12h14"/>',
+            "save": '<path d="M12 3v12m0 0 5-5m-5 5-5-5M5 19v2h14v-2"/>',
+            "open": '<path d="m6 14 1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94'
+            " 1.5H4a2 2 0 0 1-2-2V5c0-1.1.9-2 2-2h3.93a2 2 0 0 1 1.66.9l.82"
+            ' 1.2a2 2 0 0 0 1.66.9H18a2 2 0 0 1 2 2v2" />',
+        }
         svg = (
             '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">'
             f'<g fill="none" stroke="{icon_color}" stroke-width="2" stroke-linecap="round" '
@@ -425,12 +424,12 @@ class PageView(QGraphicsView):
         super().keyPressEvent(event)
 
 
-class Q2PdfWidget(QWidget):
+class Q2PdfComposer(QWidget):
 
     def __init__(self, source_file="", dpi=300):
         super().__init__()
 
-        self._preview_dpi = 15
+        self._preview_dpi = 10
         self._pdf_file = None
         self.pdf = None
         self.dpi = dpi
@@ -724,8 +723,7 @@ class Q2PdfWidget(QWidget):
             self.thumbnail_dpi_spinbox.blockSignals(previous_blocked)
         self.refresh_pages_view()
         self.composed_preview_pages[:] = [
-            self.create_composed_preview(page_number)
-            for page_number in range(self.composed_pdf.page_count)
+            self.create_composed_preview(page_number) for page_number in range(self.composed_pdf.page_count)
         ]
         self.composed_pages_model.refresh()
         self.resize_composed_pages_view()
@@ -1142,9 +1140,7 @@ class Q2PdfWidget(QWidget):
             a4_width_points, _ = fitz.paper_size("a4")
             a4_width = math.ceil(a4_width_points * self.preview_dpi / 72)
             minimum_width = (
-                a4_width
-                + int(PagesModel.THUMBNAIL_SPACING * 1.5)
-                + self.source_pages_view.frameWidth()
+                a4_width + int(PagesModel.THUMBNAIL_SPACING * 1.5) + self.source_pages_view.frameWidth()
             )
         else:
             minimum_width = 0
@@ -1155,15 +1151,3 @@ class Q2PdfWidget(QWidget):
 
     def get_selected_pages(self):
         return self.source_pages_view.get_selected_rows()
-
-
-if __name__ == "__main__":
-    app = QApplication([])
-    # pdf_widget = Q2PdfWidget(source_file="data/Scannen00031.pdf", dpi=150)
-    pdf_widget = Q2PdfWidget(dpi=150)
-    pdf_widget.preview_dpi = 10
-    pdf_widget.resize(1000, 1000)
-    pdf_widget.move(100, 100)
-    pdf_widget.show()
-    app.exec()
-    sys.exit(0)
