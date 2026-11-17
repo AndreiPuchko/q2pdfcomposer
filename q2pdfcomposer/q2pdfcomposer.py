@@ -444,13 +444,13 @@ class Q2PdfComposer(QWidget):
         self.result_data = None
         self.layoutMargins = [3, 3, 3, 3]
 
-        self.toolbar_frame = self.get_toolbar()
+        self.source_file_name = ""
         self.doc_frame = QWidget()
         doc_layout = QHBoxLayout(self.doc_frame)
         doc_layout.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignCenter)
         doc_layout.setContentsMargins(*self.layoutMargins)
 
-        self.main_layout = QVBoxLayout()
+        self.main_layout = QHBoxLayout()
         self.main_layout.setContentsMargins(*self.layoutMargins)
         self.setLayout(self.main_layout)
 
@@ -569,6 +569,7 @@ class Q2PdfComposer(QWidget):
         composed_layout = QVBoxLayout(composed_frame)
         composed_layout.setContentsMargins(0, 0, 0, 0)
         composed_layout.addWidget(self.composed_page_count_label)
+        composed_layout.addWidget(self.save_result_button)
         composed_layout.addWidget(self.composed_pages_view, stretch=1)
         work_layout.addWidget(composed_frame, stretch=1)
 
@@ -576,6 +577,12 @@ class Q2PdfComposer(QWidget):
         source_layout = QVBoxLayout(source_frame)
         source_layout.setContentsMargins(0, 0, 0, 0)
         source_layout.addWidget(QLabel("Source PDF"))
+
+        self.open_file_button = ComposerToolButton("Open", "open", primary=True)
+        self.open_file_button.clicked.connect(self.open_file)
+        self.open_file_button.setToolTip("Open source PDF")
+        source_layout.addWidget(self.open_file_button)
+
         source_layout.addWidget(self.source_pages_view, stretch=2)
         work_layout.addWidget(source_frame, stretch=2)
 
@@ -590,7 +597,7 @@ class Q2PdfComposer(QWidget):
         buttons_layout.setContentsMargins(*self.layoutMargins)
         buttons_layout.addWidget(self.add_page_button)
         buttons_layout.addWidget(self.remove_page_button)
-        buttons_layout.addWidget(self.save_result_button)
+        # buttons_layout.addWidget(self.save_result_button)
         buttons_layout.addStretch(1)
         buttons_layout.addWidget(QLabel("Thumbnails DPI:"))
         buttons_layout.addWidget(self.thumbnail_dpi_spinbox)
@@ -619,7 +626,7 @@ class Q2PdfComposer(QWidget):
         doc_layout.addWidget(work_frame, stretch=0)
         doc_layout.addWidget(preview_frame, stretch=1)
 
-        self.main_layout.addWidget(self.toolbar_frame)
+        # self.main_layout.addWidget(self.toolbar_frame)
         self.main_layout.addWidget(self.doc_frame)
         self.setAcceptDrops(True)
         for child in self.findChildren(QWidget):
@@ -645,20 +652,6 @@ class Q2PdfComposer(QWidget):
             frame.layout().setAlignment(Qt.AlignmentFlag.AlignTop)
         frame.layout().setContentsMargins(*self.layoutMargins)
         return frame
-
-    def get_toolbar(self):
-        toolbar_frame = self.get_frame()
-
-        self.open_file_button = ComposerToolButton("Open", "open", primary=True)
-        self.open_file_button.clicked.connect(self.open_file)
-        self.open_file_button.setToolTip("Open source PDF")
-
-        self.file_name_label = QLabel()
-
-        toolbar_frame.layout().addWidget(self.open_file_button)
-        toolbar_frame.layout().addWidget(QLabel("Source file:"))
-        toolbar_frame.layout().addWidget(self.file_name_label)
-        return toolbar_frame
 
     def open_file(self):
         file_name = QFileDialog.getOpenFileName(caption="Open PDF file", filter="PDF (*.PDF)")[0]
@@ -784,15 +777,15 @@ class Q2PdfComposer(QWidget):
             self.preview_source_label.setText("Preview")
             self.page_view.set_image(QPixmap())
             self.update_page_navigation()
-            self.file_name_label.clear()
+            self.source_file_name = ""
         else:
             self.refresh_pages_view()
             self.source_pages_view.set_page(0)
+            self.source_file_name = os.path.abspath(value)
             if self.pdf.page_count:
                 self.preview_page_changed(0)
                 self.page_view.fit_page()
             self.add_page_button.setEnabled(self.pdf.page_count > 0)
-            self.file_name_label.setText(os.path.abspath(value))
         if old_pdf is not None:
             old_pdf.close()
         return True
@@ -854,14 +847,14 @@ class Q2PdfComposer(QWidget):
     def preview_page_changed(self, row):
         if row < 0 or self.pdf is None or row >= self.pdf.page_count:
             return
-        if not self._previewing_result and self._preview_row == row:
+        if not self._previewing_result and self._preview_row == row and row != 0:
             return
         self._previewing_result = False
         self._preview_row = row
         self.add_page_button.setEnabled(True)
         self.remove_page_button.setEnabled(False)
+        self.preview_source_label.setText(f"Source PDF: {self.source_file_name}")
         self.composed_pages_view.clearSelection()
-        self.preview_source_label.setText(f"Source PDF — page {row + 1} of {self.pdf.page_count}")
         self.page_view.set_image(self.get_page_image(row, QImage=QImage, QPixmap=QPixmap))
         self.update_page_navigation()
 
@@ -875,7 +868,7 @@ class Q2PdfComposer(QWidget):
         self.add_page_button.setEnabled(False)
         self.remove_page_button.setEnabled(True)
         self.source_pages_view.clearSelection()
-        self.preview_source_label.setText(f"Result PDF — page {row + 1} of {self.composed_pdf.page_count}")
+        self.preview_source_label.setText(f"Result PDF")
         self.page_view.set_image(
             self.get_page_image(
                 row,
