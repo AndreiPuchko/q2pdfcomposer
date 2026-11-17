@@ -20,8 +20,8 @@ from qtpy.QtWidgets import QApplication
 
 def main():
     app = QApplication([])
-    pdf_widget = Q2PdfComposer("C:\\Users\\andre\\Desktop\\C++\\Meyers, Scott - Effective C++ Digital Collection.pdf", dpi=150)
-    # pdf_widget = Q2PdfComposer(dpi=150)
+    # pdf_widget = Q2PdfComposer("C:\\Users\\andre\\Desktop\\C++\\Meyers, Scott - Effective C++ Digital Collection.pdf", dpi=150)
+    pdf_widget = Q2PdfComposer(dpi=150)
     pdf_widget.resize(1000, 1000)
     pdf_widget.move(100, 100)
     pdf_widget.show()

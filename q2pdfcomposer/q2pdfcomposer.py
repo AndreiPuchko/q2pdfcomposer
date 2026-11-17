@@ -169,9 +169,7 @@ class PagesModel(QAbstractTableModel):
                 size = self.preview_pages.size_hint(index.row())
             else:
                 size = self.preview_pages[index.row()].size()
-            return QSize(
-                size.width() + int(self.THUMBNAIL_SPACING), size.height() + self.THUMBNAIL_SPACING
-            )
+            return QSize(size.width() + int(self.THUMBNAIL_SPACING), size.height() + self.THUMBNAIL_SPACING)
         return None
 
     def refresh(self):
@@ -729,6 +727,12 @@ class Q2PdfComposer(QWidget):
         return isinstance(watched, QWidget) and (
             watched is self.composed_pages_view or self.composed_pages_view.isAncestorOf(watched)
         )
+
+    def keyPressEvent(self, event: QKeyEvent):
+        if event.key() == Qt.Key.Key_Escape:
+            event.ignore()
+            return
+        super().keyPressEvent(event)
 
     def eventFilter(self, watched, event):
         if event.type() in (QEvent.Type.DragEnter, QEvent.Type.DragMove):
