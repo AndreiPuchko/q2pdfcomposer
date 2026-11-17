@@ -67,11 +67,26 @@ class SourcePages(dict):
     def __init__(self, composer, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.composer = composer
+        self._size_hints = {}
+
+    def clear(self):
+        super().clear()
+        self._size_hints.clear()
 
     def __getitem__(self, key: Any) -> Any:
         if super().__getitem__(key) is None:
             self.__setitem__(key, self.composer.create_source_preview_page(key))
         return super().__getitem__(key)
+
+    def size_hint(self, key: int) -> QSize:
+        if key not in self._size_hints:
+            page = self.composer.pdf[key]
+            scale = self.composer.preview_dpi / 72
+            self._size_hints[key] = QSize(
+                math.ceil(page.rect.width * scale),
+                math.ceil(page.rect.height * scale),
+            )
+        return self._size_hints[key]
 
 
 class ComposerToolButton(QToolButton):
@@ -127,7 +142,7 @@ class PagesModel(QAbstractTableModel):
     source_pages_dropped = Signal(list, int)
     PAGE_ROW_MIME_TYPE = "application/x-pdf-composer-page-row"
     SOURCE_PAGES_MIME_TYPE = "application/x-pdf-composer-source-pages"
-    THUMBNAIL_SPACING = 5
+    THUMBNAIL_SPACING = 6
 
     def __init__(self, preview_pages, allow_reordering=False, allow_dragging=False):
         super().__init__()
@@ -150,9 +165,12 @@ class PagesModel(QAbstractTableModel):
             if index.column() == 0:
                 return self.preview_pages[index.row()]
         elif role == Qt.ItemDataRole.SizeHintRole and index.column() == 0:
-            size = self.preview_pages[index.row()].size()
+            if isinstance(self.preview_pages, SourcePages):
+                size = self.preview_pages.size_hint(index.row())
+            else:
+                size = self.preview_pages[index.row()].size()
             return QSize(
-                size.width() + int(self.THUMBNAIL_SPACING * 1.5), size.height() + self.THUMBNAIL_SPACING
+                size.width() + int(self.THUMBNAIL_SPACING), size.height() + self.THUMBNAIL_SPACING
             )
         return None
 
@@ -278,7 +296,7 @@ class PdfPagesPreview(QTableView):
 
     def __init__(self):
         super().__init__()
-        self.minimum_content_width = 0
+        self.minimum_content_width = 10
         self.add_page_on_keypress = False
         self.remove_page_on_keypress = False
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -305,15 +323,43 @@ class PdfPagesPreview(QTableView):
             self.minimum_content_width = minimum_width
         self.resizeColumnsToContents()
         self.resizeRowsToContents()
-        w = self.columnWidth(0) + (
-            self.verticalScrollBar().width() if self.verticalScrollBar().isVisible() else 0
-        )
-        self.setFixedWidth(max(w, self.minimum_content_width))
-        self.content_width_changed.emit(self.width())
+        self._update_width()
 
-    def resizeEvent(self, e):
-        self.resize_to_content()
-        return super().resizeEvent(e)
+    def _update_width(self):
+        scrollbar = self.verticalScrollBar()
+        scrollbar_width = (
+            scrollbar.sizeHint().width()
+            if scrollbar.isVisible() or scrollbar.maximum() > scrollbar.minimum()
+            else 0
+        )
+        width = self.columnWidth(0) + scrollbar_width
+        width = max(width, self.minimum_content_width)
+        if width != self.width():
+            self.setFixedWidth(width)
+            self.content_width_changed.emit(width)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_width()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        index = self.currentIndex()
+        if not index.isValid():
+            return
+        rect = self.visualRect(index)
+        if rect.isEmpty():
+            return
+        painter = QPainter(self.viewport())
+        ps = 2
+        sz = self.model().data(index, Qt.ItemDataRole.SizeHintRole)
+        rect.setSize(sz)
+        pen = painter.pen()
+        pen.setWidth(ps)
+        pen.setColor(self.palette().highlight().color())
+        painter.setPen(pen)
+        painter.drawRect(rect.adjusted(ps, ps, -ps, -ps))
+        painter.end()
 
     def currentChanged(self, current: QModelIndex, previous: QModelIndex):
         self.row_selected.emit(current.row())

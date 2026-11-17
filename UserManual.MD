@@ -52,6 +52,7 @@ The preview shows the selected result page. Removing pages updates the result im
 ## Preview, Navigate, and Rotate
 
 Select a thumbnail to show its page in the preview. The navigation controls above the preview let you go to the first, previous, next, or last page, or enter a page number.
+The current thumbnail is outlined to distinguish it from other selected pages.
 
 Keyboard and mouse navigation:
 
