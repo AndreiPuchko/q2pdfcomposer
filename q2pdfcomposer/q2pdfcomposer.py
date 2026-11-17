@@ -1,5 +1,6 @@
 import math
 import os
+from typing import Any
 
 try:
     import qtpy
@@ -60,6 +61,17 @@ import pymupdf as fitz
 
 Signal = QtCore.Signal
 fitz.TOOLS.mupdf_display_errors(False)
+
+
+class SourcePages(dict):
+    def __init__(self, composer, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.composer = composer
+
+    def __getitem__(self, key: Any) -> Any:
+        if super().__getitem__(key) is None:
+            self.__setitem__(key, self.composer.create_source_preview_page(key))
+        return super().__getitem__(key)
 
 
 class ComposerToolButton(QToolButton):
@@ -130,10 +142,7 @@ class PagesModel(QAbstractTableModel):
         return 1
 
     def data(self, index: QModelIndex, role):
-        if role == Qt.ItemDataRole.DisplayRole:
-            if index.column() == 0:
-                return f"{index.row()+1}"
-        elif role == Qt.ItemDataRole.BackgroundRole:
+        if role == Qt.ItemDataRole.BackgroundRole:
             return QColor("lightgrey")
         elif role == Qt.ItemDataRole.TextAlignmentRole:
             return Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom
@@ -435,7 +444,7 @@ class Q2PdfComposer(QWidget):
         self.pdf = None
         self.dpi = dpi
 
-        self.preview_pages = {}
+        self.source_preview_pages = SourcePages(self)
         self.composed_preview_pages = []
         self.composed_pdf = fitz.open()
         self._previewing_result = False
@@ -458,7 +467,7 @@ class Q2PdfComposer(QWidget):
         self.source_pages_view.add_page_on_keypress = True
         self.source_pages_view.add_page_requested.connect(self.add_selected_pages)
         self.source_pages_view.row_selected.connect(self.preview_page_changed)
-        self.source_pages_model = PagesModel(self.preview_pages, allow_dragging=True)
+        self.source_pages_model = PagesModel(self.source_preview_pages, allow_dragging=True)
         self.source_pages_view.setModel(self.source_pages_model)
         self.source_pages_view.setDragEnabled(True)
         self.source_pages_view.setDragDropMode(QAbstractItemView.DragDropMode.DragOnly)
@@ -715,7 +724,7 @@ class Q2PdfComposer(QWidget):
             previous_blocked = self.thumbnail_dpi_spinbox.blockSignals(True)
             self.thumbnail_dpi_spinbox.setValue(value)
             self.thumbnail_dpi_spinbox.blockSignals(previous_blocked)
-        self.refresh_pages_view()
+        self.refresh_source_pages_view()
         self.composed_preview_pages[:] = [
             self.create_composed_preview(page_number) for page_number in range(self.composed_pdf.page_count)
         ]
@@ -766,7 +775,7 @@ class Q2PdfComposer(QWidget):
         self._preview_row = None
         self.result_data = None
         if self.pdf is None:
-            self.preview_pages.clear()
+            self.source_preview_pages.clear()
             self.source_pages_model.refresh()
             self.resize_source_pages_view()
             self.resize_composed_pages_view()
@@ -779,7 +788,7 @@ class Q2PdfComposer(QWidget):
             self.update_page_navigation()
             self.source_file_name = ""
         else:
-            self.refresh_pages_view()
+            self.refresh_source_pages_view()
             self.source_pages_view.set_page(0)
             self.source_file_name = os.path.abspath(value)
             if self.pdf.page_count:
@@ -810,33 +819,32 @@ class Q2PdfComposer(QWidget):
             return QPixmap.fromImage(image)
         return pixmap.tobytes("png")
 
-    def get_preview_pages(self, preview_dpi):
-        if self.pdf is None:
-            return {}
-        return {page.number: self.get_page_image(page.number, preview_dpi) for page in self.pdf.pages()}
+    def draw_page_number(self, page_number: int, page):
+        image = QImage()
+        image.loadFromData(page)
+        pix = QPixmap.fromImage(image)
+        painter = QPainter(pix)
+        font = painter.font()
+        font.setPointSize(self.preview_dpi)
+        painter.setFont(font)
+        painter.drawText(QRectF(pix.rect()), Qt.AlignmentFlag.AlignCenter, f"{page_number + 1}")
+        return pix
 
-    def refresh_pages_view(self):
-        self.preview_pages.clear()
+    def create_source_preview_page(self, page_number: int):
+        page = self.get_page_image(page_number, self.preview_dpi)
+        return self.draw_page_number(page_number, page)
+
+    def refresh_source_pages_view(self):
+        self.source_preview_pages.clear()
         if self.pdf is None:
             self.source_pages_model.refresh()
             self.resize_source_pages_view()
             self.resize_composed_pages_view()
             self.update_page_navigation()
             return
-        for key, value in self.get_preview_pages(self.preview_dpi).items():
-            image = QImage()
-            image.loadFromData(value)
-            pix = QPixmap.fromImage(image)
-            painter = QPainter(pix)
-            font = painter.font()
-            font.setPointSize(self.preview_dpi)
-            painter.setFont(font)
-            painter.drawText(QRectF(pix.rect()), Qt.AlignmentFlag.AlignCenter, f"{key + 1}")
-            self.preview_pages[key] = pix
-
-        self.preview_pages.update()
-        previous_row = self.source_pages_view.currentIndex().row()
+        self.source_preview_pages.update({x: None for x in range(self.pdf.page_count)})
         self.source_pages_model.refresh()
+        previous_row = self.source_pages_view.currentIndex().row()
         self.resize_source_pages_view()
         self.resize_composed_pages_view()
         if previous_row >= 0 and previous_row < self.source_pages_model.rowCount() - 1:
@@ -940,7 +948,7 @@ class Q2PdfComposer(QWidget):
             page = self.pdf.load_page(row)
             page.set_rotation((page.rotation + 90) % 360)
             self._preview_row = None
-            self.refresh_pages_view()
+            self.refresh_source_pages_view()
             self.source_pages_view.set_page(row)
             self.preview_page_changed(row)
         self.page_view.fit_page()
@@ -1110,19 +1118,8 @@ class Q2PdfComposer(QWidget):
         self.add_selected_pages()
 
     def create_composed_preview(self, page_number):
-        image = QImage()
-        if not image.loadFromData(
-            self.get_page_image(page_number, self.preview_dpi, document=self.composed_pdf)
-        ):
-            raise RuntimeError(f"Unable to render result page {page_number + 1}")
-        preview = QPixmap.fromImage(image)
-        painter = QPainter(preview)
-        font = painter.font()
-        font.setPointSize(self.preview_dpi)
-        painter.setFont(font)
-        painter.drawText(QRectF(preview.rect()), Qt.AlignmentFlag.AlignCenter, f"{page_number + 1}")
-        painter.end()
-        return preview
+        image = self.get_page_image(page_number, self.preview_dpi, document=self.composed_pdf)
+        return self.draw_page_number(page_number, image)
 
     def resize_composed_pages_view(self, minimum_width=None):
         if minimum_width is None:
@@ -1139,9 +1136,6 @@ class Q2PdfComposer(QWidget):
         else:
             minimum_width = 0
         self.source_pages_view.resize_to_content(minimum_width)
-
-    def get_page_count(self):
-        return self.source_pages_view.model().rowCount()
 
     def get_selected_pages(self):
         return self.source_pages_view.get_selected_rows()
