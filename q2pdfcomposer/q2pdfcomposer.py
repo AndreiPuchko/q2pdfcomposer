@@ -482,7 +482,7 @@ class PageView(QGraphicsView):
 
 class Q2PdfComposer(QWidget):
 
-    def __init__(self, source_file="", dpi=300):
+    def __init__(self, source_file="", dpi=150):
         super().__init__()
 
         self._preview_dpi = 10
