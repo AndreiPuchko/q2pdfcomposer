@@ -92,7 +92,7 @@ class SourcePages(dict):
 class ComposerToolButton(QToolButton):
     def __init__(self, text, icon_name, parent=None, primary=False):
         super().__init__(parent)
-        icon_color = "#ffffff" if primary else "#394552"
+        icon_color = "#ffffff" if primary else "#2E39B3"
         self.SVG_ICONS = {
             "first": '<path d="M5 4v16M19 5l-8 7 8 7"/>',
             "previous": '<path d="M17 5l-8 7 8 7"/>',
