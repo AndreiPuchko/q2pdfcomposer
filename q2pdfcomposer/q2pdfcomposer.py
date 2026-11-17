@@ -59,6 +59,7 @@ from qtpy.QtCore import (
 import pymupdf as fitz
 
 Signal = QtCore.Signal
+fitz.TOOLS.mupdf_display_errors(False)
 
 
 class ComposerToolButton(QToolButton):
@@ -144,7 +145,7 @@ class PagesModel(QAbstractTableModel):
             return QSize(
                 size.width() + int(self.THUMBNAIL_SPACING * 1.5), size.height() + self.THUMBNAIL_SPACING
             )
-        return QVariant()
+        return None
 
     def refresh(self):
         self.beginResetModel()
@@ -807,12 +808,12 @@ class Q2PdfComposer(QWidget):
         pixmap = document[page_number].get_pixmap(dpi=dpi, alpha=False)
         if QImage and QPixmap:
             image = QImage(
-                pixmap.samples_ptr,
+                pixmap.samples_mv,
                 pixmap.width,
                 pixmap.height,
                 pixmap.stride,
                 QImage.Format.Format_RGB888,
-            )
+            ).copy()
             return QPixmap.fromImage(image)
         return pixmap.tobytes("png")
 

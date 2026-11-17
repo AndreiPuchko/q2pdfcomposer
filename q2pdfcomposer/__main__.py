@@ -17,7 +17,8 @@ if not qtpy.API_NAME:
 
 from qtpy.QtWidgets import QApplication
 
-if __name__ == "__main__":
+
+def main():
     app = QApplication([])
     pdf_widget = Q2PdfComposer(dpi=150)
     pdf_widget.resize(1000, 1000)
@@ -25,3 +26,7 @@ if __name__ == "__main__":
     pdf_widget.show()
     app.exec()
     sys.exit(0)
+
+
+if __name__ == "__main__":
+    main()
