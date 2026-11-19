@@ -877,6 +877,7 @@ class Q2PdfComposer(QWidget):
         font = painter.font()
         font.setPointSize(self.preview_dpi)
         painter.setFont(font)
+        painter.setPen(QColor("blue"))
         painter.drawText(QRectF(pix.rect()), Qt.AlignmentFlag.AlignCenter, f"{page_number + 1}")
         return pix
 

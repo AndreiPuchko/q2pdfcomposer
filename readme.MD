@@ -2,7 +2,7 @@
 
 PDF Composer is a desktop application for assembling PDF documents from selected pages. Open a source PDF, choose pages, arrange and rotate the result, then save it as a new PDF.
 
-<!-- Screenshot placeholder: /Main window with source pages, result pages, and preview/ -->
+![App Screenshot](assets/screenshot.png)
 
 ## Features
 
