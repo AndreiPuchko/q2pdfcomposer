@@ -2,7 +2,6 @@ data
 output
 temp
 __pycache__
-*.png
 q2gui.ini
 *.spec
 build/
