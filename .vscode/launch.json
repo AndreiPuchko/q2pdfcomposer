@@ -9,7 +9,8 @@
             "name": "Python Debugger: Current File",
             "type": "debugpy",
             "request": "launch",
-            "program": "q2pdfcomposer/__main__.py",
+            //"program": "q2pdfcomposer/__main__.py",
+            "program": "manual_test.py",
             "console": "integratedTerminal"
         }
     ]
