@@ -21,8 +21,8 @@ The window contains three main areas:
 
 Opening another source replaces the current source document. Pages already added to the result remain there.
 Source thumbnails already included from the same PDF are highlighted, even if you reopen that file during the current session.
-When an included source page is shown in the preview while the source list has focus, its matching result thumbnails are highlighted too.
-When a result thumbnail has focus and its page is shown in the preview, the matching source thumbnail is outlined in pink.
+When an included source page is shown in the preview while the source list has focus, its matching result thumbnails are outlined in pink.
+When a result thumbnail has focus and its page is shown in the preview, the matching source thumbnail is outlined in the same pink.
 The source and result lists scroll automatically to bring these highlighted thumbnails into view.
 
 /Open button and source file/

@@ -113,17 +113,11 @@ def test_source_preview_highlights_matching_result_page_while_source_list_has_fo
     composer.source_pages_view.set_page(1)
     qapp.processEvents()
 
-    background_role = Qt.ItemDataRole.BackgroundRole
-    assert composer.composed_pages_model.data(composer.composed_pages_model.index(0, 0), background_role) == QColor(
-        "lightgrey"
-    )
-    assert composer.composed_pages_model.data(composer.composed_pages_model.index(1, 0), background_role) == QColor(
-        "#45ef07"
-    )
+    assert composer.composed_pages_view.alternative_frame_rows == {1}
 
     composer.composed_pages_view.setFocus()
     qapp.processEvents()
-    assert composer.composed_pages_model.previewed_rows == set()
+    assert composer.composed_pages_view.alternative_frame_rows == set()
 
 
 def test_result_preview_frames_matching_source_page_when_result_list_has_focus(composer, qapp):

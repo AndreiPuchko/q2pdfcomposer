@@ -151,7 +151,6 @@ class PagesModel(QAbstractTableModel):
         self.allow_reordering = allow_reordering
         self.allow_dragging = allow_dragging
         self.included_rows = set()
-        self.previewed_rows = set()
 
     def rowCount(self, parent=None):
         return len(self.preview_pages)
@@ -161,11 +160,7 @@ class PagesModel(QAbstractTableModel):
 
     def data(self, index: QModelIndex, role):
         if role == Qt.ItemDataRole.BackgroundRole:
-            return (
-                QColor("#45ef07")
-                if index.row() in self.included_rows or index.row() in self.previewed_rows
-                else QColor("lightgrey")
-            )
+            return QColor("#45ef07") if index.row() in self.included_rows else QColor("lightgrey")
         elif role == Qt.ItemDataRole.TextAlignmentRole:
             return Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom
         if role == Qt.ItemDataRole.DecorationRole:
@@ -184,13 +179,6 @@ class PagesModel(QAbstractTableModel):
         if rows == self.included_rows:
             return
         self.included_rows = rows
-        self._emit_background_changed()
-
-    def set_previewed_rows(self, rows):
-        rows = set(rows)
-        if rows == self.previewed_rows:
-            return
-        self.previewed_rows = rows
         self._emit_background_changed()
 
     def _emit_background_changed(self):
@@ -1004,7 +992,7 @@ class Q2PdfComposer(QWidget):
                 for result_row, (source_hash, source_row) in enumerate(self.composed_page_sources)
                 if source_hash == self.source_pdf_hash and source_row == self._preview_row
             }
-        self.composed_pages_model.set_previewed_rows(previewed_rows)
+        self.composed_pages_view.set_alternative_frame_rows(previewed_rows)
         if previewed_rows:
             self.composed_pages_view.ensure_row_visible(min(previewed_rows))
 
