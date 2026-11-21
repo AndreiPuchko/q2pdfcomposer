@@ -1,3 +1,4 @@
+import hashlib
 import math
 import os
 from typing import Any
@@ -149,6 +150,7 @@ class PagesModel(QAbstractTableModel):
         self.preview_pages = preview_pages
         self.allow_reordering = allow_reordering
         self.allow_dragging = allow_dragging
+        self.included_rows = set()
 
     def rowCount(self, parent=None):
         return len(self.preview_pages)
@@ -158,7 +160,7 @@ class PagesModel(QAbstractTableModel):
 
     def data(self, index: QModelIndex, role):
         if role == Qt.ItemDataRole.BackgroundRole:
-            return QColor("lightgrey")
+            return QColor("#45ef07") if index.row() in self.included_rows else QColor("lightgrey")
         elif role == Qt.ItemDataRole.TextAlignmentRole:
             return Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom
         if role == Qt.ItemDataRole.DecorationRole:
@@ -171,6 +173,18 @@ class PagesModel(QAbstractTableModel):
                 size = self.preview_pages[index.row()].size()
             return QSize(size.width() + int(self.THUMBNAIL_SPACING), size.height() + self.THUMBNAIL_SPACING)
         return None
+
+    def set_included_rows(self, rows):
+        rows = set(rows)
+        if rows == self.included_rows:
+            return
+        self.included_rows = rows
+        if self.rowCount():
+            self.dataChanged.emit(
+                self.index(0, 0),
+                self.index(self.rowCount() - 1, 0),
+                [Qt.ItemDataRole.BackgroundRole],
+            )
 
     def refresh(self):
         self.beginResetModel()
@@ -490,6 +504,8 @@ class Q2PdfComposer(QWidget):
 
         self.source_preview_pages = SourcePages(self)
         self.composed_preview_pages = []
+        self.composed_page_sources = []
+        self.source_pdf_hash = None
         self.composed_pdf = fitz.open()
         self._previewing_result = False
         self._preview_row = None
@@ -812,6 +828,7 @@ class Q2PdfComposer(QWidget):
 
     def _load_pdf_file(self, value, reopen_on_error):
         try:
+            new_source_hash = self._hash_pdf_file(value) if value else None
             new_pdf = fitz.open(value) if value else None
         except (fitz.mupdf.FzErrorBase, OSError, RuntimeError, ValueError) as error:
             QMessageBox.critical(self, "Open failed", f"Could not open PDF:\n{error}")
@@ -821,6 +838,7 @@ class Q2PdfComposer(QWidget):
         old_pdf = self.pdf
         self.pdf = new_pdf
         self._pdf_file = value or None
+        self.source_pdf_hash = new_source_hash
         self._previewing_result = False
         self._preview_row = None
         self.result_data = None
@@ -831,6 +849,7 @@ class Q2PdfComposer(QWidget):
             self.resize_composed_pages_view()
             self.source_pages_view.clearSelection()
             self.source_pages_view.setCurrentIndex(QModelIndex())
+            self.source_pages_model.set_included_rows(set())
             self.add_page_button.setEnabled(False)
             self.remove_page_button.setEnabled(False)
             self.preview_source_label.setText("Preview")
@@ -848,6 +867,14 @@ class Q2PdfComposer(QWidget):
         if old_pdf is not None:
             old_pdf.close()
         return True
+
+    @staticmethod
+    def _hash_pdf_file(file_name):
+        digest = hashlib.sha256()
+        with open(file_name, "rb") as pdf_file:
+            for chunk in iter(lambda: pdf_file.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
 
     def get_page_image(self, page_number, dpi=None, QImage=None, QPixmap=None, document=None):
         if dpi is None:
@@ -895,6 +922,7 @@ class Q2PdfComposer(QWidget):
             return
         self.source_preview_pages.update({x: None for x in range(self.pdf.page_count)})
         self.source_pages_model.refresh()
+        self.update_source_page_highlights()
         previous_row = self.source_pages_view.currentIndex().row()
         self.resize_source_pages_view()
         self.resize_composed_pages_view()
@@ -902,6 +930,16 @@ class Q2PdfComposer(QWidget):
             self.source_pages_view.set_page(previous_row)
         else:
             self.source_pages_view.set_page(0)
+
+    def update_source_page_highlights(self):
+        included_rows = set()
+        if self.source_pdf_hash is not None:
+            included_rows = {
+                source_row
+                for source_hash, source_row in self.composed_page_sources
+                if source_hash == self.source_pdf_hash
+            }
+        self.source_pages_model.set_included_rows(included_rows)
 
     def preview_page_changed(self, row):
         if row < 0 or self.pdf is None or row >= self.pdf.page_count:
@@ -1022,6 +1060,8 @@ class Q2PdfComposer(QWidget):
             if document_destination == self.composed_pdf.page_count:
                 document_destination = -1
         self.composed_pdf.move_page(source_row, document_destination)
+        source_reference = self.composed_page_sources.pop(source_row)
+        self.composed_page_sources.insert(destination_row, source_reference)
 
         preview_row = None
         if self._previewing_result and self._preview_row is not None:
@@ -1079,6 +1119,8 @@ class Q2PdfComposer(QWidget):
         preview_row = self._preview_row
         for row in reversed(selected_rows):
             self.composed_pdf.delete_page(row)
+            del self.composed_page_sources[row]
+        self.update_source_page_highlights()
 
         self.save_result_button.setEnabled(self.composed_pdf.page_count > 0)
         self.composed_preview_pages[:] = [
@@ -1138,7 +1180,6 @@ class Q2PdfComposer(QWidget):
         destination_row = max(0, min(destination_row, self.composed_pdf.page_count))
         insert_count = len(source_rows)
         preview_row = self._preview_row if self._previewing_result else None
-        first_result_row = destination_row
         for offset, source_row in enumerate(source_rows):
             self.composed_pdf.insert_pdf(
                 self.pdf,
@@ -1146,6 +1187,11 @@ class Q2PdfComposer(QWidget):
                 to_page=source_row,
                 start_at=destination_row + offset,
             )
+            self.composed_page_sources.insert(
+                destination_row + offset,
+                (self.source_pdf_hash, source_row),
+            )
+        self.update_source_page_highlights()
         self.save_result_button.setEnabled(True)
         self.composed_preview_pages[:] = [
             self.create_composed_preview(page_number) for page_number in range(self.composed_pdf.page_count)

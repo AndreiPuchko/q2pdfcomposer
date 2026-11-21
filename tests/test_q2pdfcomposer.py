@@ -61,6 +61,49 @@ def test_load_pdf_and_page_navigation(composer):
     assert composer._preview_row == 1
 
 
+def test_source_pages_highlight_against_reopened_pdf_hash(composer, sample_pdf, tmp_path):
+    composer.add_source_page(1)
+
+    identical_source = tmp_path / "identical.pdf"
+    identical_source.write_bytes(sample_pdf.read_bytes())
+    composer.pdf_file = str(identical_source)
+    included_color = QColor("#d9ead3")
+    background_role = Qt.ItemDataRole.BackgroundRole
+    assert composer.source_pages_model.data(composer.source_pages_model.index(1, 0), background_role) == included_color
+
+    different_source = tmp_path / "different.pdf"
+    other_pdf = fitz.open()
+    other_pdf.new_page(width=200, height=300)
+    other_pdf.save(different_source)
+    other_pdf.close()
+    composer.pdf_file = str(different_source)
+    assert composer.source_pages_model.data(composer.source_pages_model.index(0, 0), background_role) == QColor(
+        "lightgrey"
+    )
+
+    composer.pdf_file = str(identical_source)
+    assert composer.source_pages_model.data(composer.source_pages_model.index(1, 0), background_role) == included_color
+
+
+def test_source_page_highlight_remains_until_last_copy_is_removed(composer):
+    composer.add_source_page(1)
+    composer.add_source_page(1)
+    background_role = Qt.ItemDataRole.BackgroundRole
+    source_index = composer.source_pages_model.index(1, 0)
+
+    assert composer.source_pages_model.data(source_index, background_role) == QColor("#d9ead3")
+
+    composer.composed_pages_view.selectRow(0)
+    composer.preview_composed_page_changed(0)
+    composer.remove_selected_pages()
+    assert composer.source_pages_model.data(source_index, background_role) == QColor("#d9ead3")
+
+    composer.composed_pages_view.selectRow(0)
+    composer.preview_composed_page_changed(0)
+    composer.remove_selected_pages()
+    assert composer.source_pages_model.data(source_index, background_role) == QColor("lightgrey")
+
+
 def test_add_rotate_remove_and_save_result(composer, tmp_path):
     selection = composer.source_pages_view.selectionModel()
     selection.select(composer.source_pages_model.index(0, 0), QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows)

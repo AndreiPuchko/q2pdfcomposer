@@ -20,6 +20,7 @@ The window contains three main areas:
 - Dropping a PDF elsewhere in the window opens it as the source without adding its pages.
 
 Opening another source replaces the current source document. Pages already added to the result remain there.
+Source thumbnails already included from the same PDF are highlighted, even if you reopen that file during the current session.
 
 /Open button and source file/
 
