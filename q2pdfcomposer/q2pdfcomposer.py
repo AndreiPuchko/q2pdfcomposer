@@ -327,6 +327,7 @@ class PdfPagesPreview(QTableView):
         self.minimum_content_width = 10
         self.add_page_on_keypress = False
         self.remove_page_on_keypress = False
+        self.alternative_frame_rows = set()
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         # self.setShowGrid(False)
@@ -378,24 +379,36 @@ class PdfPagesPreview(QTableView):
         super().focusOutEvent(event)
         self.focus_changed.emit()
 
+    def set_alternative_frame_rows(self, rows):
+        rows = set(rows)
+        if rows == self.alternative_frame_rows:
+            return
+        self.alternative_frame_rows = rows
+        self.viewport().update()
+
     def paintEvent(self, event):
         super().paintEvent(event)
         index = self.currentIndex()
-        if not index.isValid():
+        if not index.isValid() and not self.alternative_frame_rows:
             return
+        painter = QPainter(self.viewport())
+        if index.isValid():
+            self._draw_page_frame(painter, index.row(), self.palette().highlight().color(), 2)
+        for row in sorted(self.alternative_frame_rows):
+            self._draw_page_frame(painter, row, QColor("#ff4da6"), 3)
+        painter.end()
+
+    def _draw_page_frame(self, painter, row, color, width):
+        index = self.model().index(row, 0)
         rect = self.visualRect(index)
         if rect.isEmpty():
             return
-        painter = QPainter(self.viewport())
-        ps = 2
-        sz = self.model().data(index, Qt.ItemDataRole.SizeHintRole)
-        rect.setSize(sz)
+        rect.setSize(self.model().data(index, Qt.ItemDataRole.SizeHintRole))
         pen = painter.pen()
-        pen.setWidth(ps)
-        pen.setColor(self.palette().highlight().color())
+        pen.setWidth(width)
+        pen.setColor(color)
         painter.setPen(pen)
-        painter.drawRect(rect.adjusted(ps, ps, -ps, -ps))
-        painter.end()
+        painter.drawRect(rect.adjusted(width, width, -width, -width))
 
     def currentChanged(self, current: QModelIndex, previous: QModelIndex):
         self.row_selected.emit(current.row())
@@ -577,6 +590,7 @@ class Q2PdfComposer(QWidget):
         self.composed_pages_view.setDropIndicatorShown(True)
         self.composed_pages_view.setDefaultDropAction(Qt.DropAction.MoveAction)
         self.composed_pages_view.setDragDropOverwriteMode(False)
+        self.composed_pages_view.focus_changed.connect(self.update_source_page_frames)
         self.source_pages_view.content_width_changed.connect(self.resize_composed_pages_view)
         self.composed_pages_view.clicked.connect(
             lambda index: self.preview_composed_page_changed(index.row())
@@ -868,6 +882,7 @@ class Q2PdfComposer(QWidget):
         self._preview_row = None
         self.result_data = None
         self.update_composed_page_highlights()
+        self.update_source_page_frames()
         if self.pdf is None:
             self.source_preview_pages.clear()
             self.source_pages_model.refresh()
@@ -986,6 +1001,28 @@ class Q2PdfComposer(QWidget):
             }
         self.composed_pages_model.set_previewed_rows(previewed_rows)
 
+    def update_source_page_frames(self):
+        framed_rows = set()
+        focus_widget = QApplication.focusWidget()
+        result_view_has_focus = focus_widget is not None and (
+            focus_widget is self.composed_pages_view or self.composed_pages_view.isAncestorOf(focus_widget)
+        )
+        if (
+            result_view_has_focus
+            and self._previewing_result
+            and self.source_pdf_hash is not None
+            and self._preview_row is not None
+            and 0 <= self._preview_row < len(self.composed_page_sources)
+        ):
+            source_hash, source_row = self.composed_page_sources[self._preview_row]
+            if (
+                source_hash == self.source_pdf_hash
+                and self.pdf is not None
+                and 0 <= source_row < self.pdf.page_count
+            ):
+                framed_rows.add(source_row)
+        self.source_pages_view.set_alternative_frame_rows(framed_rows)
+
     def preview_page_changed(self, row):
         if row < 0 or self.pdf is None or row >= self.pdf.page_count:
             return
@@ -999,6 +1036,7 @@ class Q2PdfComposer(QWidget):
         self.composed_pages_view.clearSelection()
         self.page_view.set_image(self.get_page_image(row, QImage=QImage, QPixmap=QPixmap))
         self.update_composed_page_highlights()
+        self.update_source_page_frames()
         self.update_page_navigation()
 
     def preview_composed_page_changed(self, row):
@@ -1013,6 +1051,7 @@ class Q2PdfComposer(QWidget):
         self.source_pages_view.clearSelection()
         self.preview_source_label.setText(f"Result PDF")
         self.update_composed_page_highlights()
+        self.update_source_page_frames()
         self.page_view.set_image(
             self.get_page_image(
                 row,
@@ -1130,6 +1169,7 @@ class Q2PdfComposer(QWidget):
         if preview_row is not None:
             self._preview_row = None
             self.composed_pages_view.set_page(preview_row)
+        self.update_source_page_frames()
         self.update_page_navigation()
 
     def save_result(self):
@@ -1198,6 +1238,7 @@ class Q2PdfComposer(QWidget):
                 self.remove_page_button.setEnabled(False)
                 self.preview_source_label.setText("Preview")
                 self.page_view.set_image(QPixmap())
+                self.update_source_page_frames()
                 self.update_page_navigation()
 
     def add_selected_pages(self):

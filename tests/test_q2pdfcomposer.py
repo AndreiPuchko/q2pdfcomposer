@@ -125,6 +125,20 @@ def test_source_preview_highlights_matching_result_page_while_source_list_has_fo
     assert composer.composed_pages_model.previewed_rows == set()
 
 
+def test_result_preview_frames_matching_source_page_when_result_list_has_focus(composer, qapp):
+    composer.add_source_page(1)
+    composer.show()
+    composer.composed_pages_view.setFocus()
+    composer.composed_pages_view.set_page(0)
+    qapp.processEvents()
+
+    assert composer.source_pages_view.alternative_frame_rows == {1}
+
+    composer.source_pages_view.setFocus()
+    qapp.processEvents()
+    assert composer.source_pages_view.alternative_frame_rows == set()
+
+
 def test_add_rotate_remove_and_save_result(composer, tmp_path):
     selection = composer.source_pages_view.selectionModel()
     selection.select(composer.source_pages_model.index(0, 0), QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows)
