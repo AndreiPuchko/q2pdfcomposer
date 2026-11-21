@@ -386,6 +386,11 @@ class PdfPagesPreview(QTableView):
         self.alternative_frame_rows = rows
         self.viewport().update()
 
+    def ensure_row_visible(self, row):
+        model = self.model()
+        if model is not None and 0 <= row < model.rowCount():
+            self.scrollTo(model.index(row, 0), QAbstractItemView.ScrollHint.EnsureVisible)
+
     def paintEvent(self, event):
         super().paintEvent(event)
         index = self.currentIndex()
@@ -1000,6 +1005,8 @@ class Q2PdfComposer(QWidget):
                 if source_hash == self.source_pdf_hash and source_row == self._preview_row
             }
         self.composed_pages_model.set_previewed_rows(previewed_rows)
+        if previewed_rows:
+            self.composed_pages_view.ensure_row_visible(min(previewed_rows))
 
     def update_source_page_frames(self):
         framed_rows = set()
@@ -1022,6 +1029,8 @@ class Q2PdfComposer(QWidget):
             ):
                 framed_rows.add(source_row)
         self.source_pages_view.set_alternative_frame_rows(framed_rows)
+        if framed_rows:
+            self.source_pages_view.ensure_row_visible(min(framed_rows))
 
     def preview_page_changed(self, row):
         if row < 0 or self.pdf is None or row >= self.pdf.page_count:

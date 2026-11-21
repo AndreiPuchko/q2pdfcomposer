@@ -6,6 +6,7 @@ import pytest
 from qtpy.QtCore import QMimeData, QModelIndex, Qt, QUrl
 from qtpy.QtCore import QItemSelectionModel
 from qtpy.QtGui import QColor, QPixmap
+from qtpy.QtWidgets import QAbstractItemView
 
 from q2pdfcomposer.q2pdfcomposer import (
     PagesModel,
@@ -137,6 +138,59 @@ def test_result_preview_frames_matching_source_page_when_result_list_has_focus(c
     composer.source_pages_view.setFocus()
     qapp.processEvents()
     assert composer.source_pages_view.alternative_frame_rows == set()
+
+
+def test_highlighted_pages_are_scrolled_into_view_in_both_lists(composer, qapp, tmp_path):
+    source_path = tmp_path / "long.pdf"
+    source_pdf = fitz.open()
+    for _ in range(40):
+        source_pdf.new_page(width=200, height=300)
+    source_pdf.save(source_path)
+    source_pdf.close()
+
+    composer.pdf_file = str(source_path)
+    composer.insert_source_pages_at(list(range(40)), 0)
+    composer.resize(1200, 400)
+    composer.show()
+    qapp.processEvents()
+
+    source_index = composer.source_pages_model.index(30, 0)
+    result_index = composer.composed_pages_model.index(30, 0)
+    composer.source_pages_view.scrollTo(
+        composer.source_pages_model.index(0, 0),
+        QAbstractItemView.ScrollHint.PositionAtTop,
+    )
+    composer.composed_pages_view.scrollTo(
+        composer.composed_pages_model.index(0, 0),
+        QAbstractItemView.ScrollHint.PositionAtTop,
+    )
+    qapp.processEvents()
+    assert not composer.composed_pages_view.viewport().rect().intersects(
+        composer.composed_pages_view.visualRect(result_index)
+    )
+
+    composer.source_pages_view.setFocus()
+    composer.source_pages_view.set_page(30)
+    qapp.processEvents()
+    assert composer.composed_pages_view.viewport().rect().intersects(
+        composer.composed_pages_view.visualRect(result_index)
+    )
+
+    composer.source_pages_view.scrollTo(
+        composer.source_pages_model.index(0, 0),
+        QAbstractItemView.ScrollHint.PositionAtTop,
+    )
+    qapp.processEvents()
+    assert not composer.source_pages_view.viewport().rect().intersects(
+        composer.source_pages_view.visualRect(source_index)
+    )
+
+    composer.composed_pages_view.setFocus()
+    composer.composed_pages_view.set_page(30)
+    qapp.processEvents()
+    assert composer.source_pages_view.viewport().rect().intersects(
+        composer.source_pages_view.visualRect(source_index)
+    )
 
 
 def test_add_rotate_remove_and_save_result(composer, tmp_path):
