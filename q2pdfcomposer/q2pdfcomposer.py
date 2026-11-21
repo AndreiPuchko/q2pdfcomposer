@@ -151,6 +151,7 @@ class PagesModel(QAbstractTableModel):
         self.allow_reordering = allow_reordering
         self.allow_dragging = allow_dragging
         self.included_rows = set()
+        self.previewed_rows = set()
 
     def rowCount(self, parent=None):
         return len(self.preview_pages)
@@ -160,7 +161,11 @@ class PagesModel(QAbstractTableModel):
 
     def data(self, index: QModelIndex, role):
         if role == Qt.ItemDataRole.BackgroundRole:
-            return QColor("#45ef07") if index.row() in self.included_rows else QColor("lightgrey")
+            return (
+                QColor("#45ef07")
+                if index.row() in self.included_rows or index.row() in self.previewed_rows
+                else QColor("lightgrey")
+            )
         elif role == Qt.ItemDataRole.TextAlignmentRole:
             return Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom
         if role == Qt.ItemDataRole.DecorationRole:
@@ -179,6 +184,16 @@ class PagesModel(QAbstractTableModel):
         if rows == self.included_rows:
             return
         self.included_rows = rows
+        self._emit_background_changed()
+
+    def set_previewed_rows(self, rows):
+        rows = set(rows)
+        if rows == self.previewed_rows:
+            return
+        self.previewed_rows = rows
+        self._emit_background_changed()
+
+    def _emit_background_changed(self):
         if self.rowCount():
             self.dataChanged.emit(
                 self.index(0, 0),
@@ -301,6 +316,7 @@ class PagesModel(QAbstractTableModel):
 
 class PdfPagesPreview(QTableView):
     row_selected = Signal(int)
+    focus_changed = Signal()
     preview_dpi_changed = Signal(int)
     content_width_changed = Signal(int)
     add_page_requested = Signal()
@@ -353,6 +369,14 @@ class PdfPagesPreview(QTableView):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._update_width()
+
+    def focusInEvent(self, event):
+        super().focusInEvent(event)
+        self.focus_changed.emit()
+
+    def focusOutEvent(self, event):
+        super().focusOutEvent(event)
+        self.focus_changed.emit()
 
     def paintEvent(self, event):
         super().paintEvent(event)
@@ -536,6 +560,7 @@ class Q2PdfComposer(QWidget):
         self.source_pages_view.setToolTip(
             "Double-click a page or press Space, Enter, or + to add it to the result"
         )
+        self.source_pages_view.focus_changed.connect(self.update_composed_page_highlights)
 
         self.composed_pages_view = PdfPagesPreview()
         self.composed_pages_view.remove_page_on_keypress = True
@@ -842,6 +867,7 @@ class Q2PdfComposer(QWidget):
         self._previewing_result = False
         self._preview_row = None
         self.result_data = None
+        self.update_composed_page_highlights()
         if self.pdf is None:
             self.source_preview_pages.clear()
             self.source_pages_model.refresh()
@@ -941,6 +967,25 @@ class Q2PdfComposer(QWidget):
             }
         self.source_pages_model.set_included_rows(included_rows)
 
+    def update_composed_page_highlights(self):
+        previewed_rows = set()
+        focus_widget = QApplication.focusWidget()
+        source_view_has_focus = focus_widget is not None and (
+            focus_widget is self.source_pages_view or self.source_pages_view.isAncestorOf(focus_widget)
+        )
+        if (
+            source_view_has_focus
+            and not self._previewing_result
+            and self.source_pdf_hash is not None
+            and self._preview_row is not None
+        ):
+            previewed_rows = {
+                result_row
+                for result_row, (source_hash, source_row) in enumerate(self.composed_page_sources)
+                if source_hash == self.source_pdf_hash and source_row == self._preview_row
+            }
+        self.composed_pages_model.set_previewed_rows(previewed_rows)
+
     def preview_page_changed(self, row):
         if row < 0 or self.pdf is None or row >= self.pdf.page_count:
             return
@@ -953,6 +998,7 @@ class Q2PdfComposer(QWidget):
         self.preview_source_label.setText(f"Source PDF: {self.source_file_name}")
         self.composed_pages_view.clearSelection()
         self.page_view.set_image(self.get_page_image(row, QImage=QImage, QPixmap=QPixmap))
+        self.update_composed_page_highlights()
         self.update_page_navigation()
 
     def preview_composed_page_changed(self, row):
@@ -966,6 +1012,7 @@ class Q2PdfComposer(QWidget):
         self.remove_page_button.setEnabled(True)
         self.source_pages_view.clearSelection()
         self.preview_source_label.setText(f"Result PDF")
+        self.update_composed_page_highlights()
         self.page_view.set_image(
             self.get_page_image(
                 row,
@@ -1062,6 +1109,7 @@ class Q2PdfComposer(QWidget):
         self.composed_pdf.move_page(source_row, document_destination)
         source_reference = self.composed_page_sources.pop(source_row)
         self.composed_page_sources.insert(destination_row, source_reference)
+        self.update_composed_page_highlights()
 
         preview_row = None
         if self._previewing_result and self._preview_row is not None:
@@ -1121,6 +1169,7 @@ class Q2PdfComposer(QWidget):
             self.composed_pdf.delete_page(row)
             del self.composed_page_sources[row]
         self.update_source_page_highlights()
+        self.update_composed_page_highlights()
 
         self.save_result_button.setEnabled(self.composed_pdf.page_count > 0)
         self.composed_preview_pages[:] = [
@@ -1192,6 +1241,7 @@ class Q2PdfComposer(QWidget):
                 (self.source_pdf_hash, source_row),
             )
         self.update_source_page_highlights()
+        self.update_composed_page_highlights()
         self.save_result_button.setEnabled(True)
         self.composed_preview_pages[:] = [
             self.create_composed_preview(page_number) for page_number in range(self.composed_pdf.page_count)

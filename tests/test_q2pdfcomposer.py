@@ -67,7 +67,7 @@ def test_source_pages_highlight_against_reopened_pdf_hash(composer, sample_pdf, 
     identical_source = tmp_path / "identical.pdf"
     identical_source.write_bytes(sample_pdf.read_bytes())
     composer.pdf_file = str(identical_source)
-    included_color = QColor("#d9ead3")
+    included_color = QColor("#45ef07")
     background_role = Qt.ItemDataRole.BackgroundRole
     assert composer.source_pages_model.data(composer.source_pages_model.index(1, 0), background_role) == included_color
 
@@ -91,17 +91,38 @@ def test_source_page_highlight_remains_until_last_copy_is_removed(composer):
     background_role = Qt.ItemDataRole.BackgroundRole
     source_index = composer.source_pages_model.index(1, 0)
 
-    assert composer.source_pages_model.data(source_index, background_role) == QColor("#d9ead3")
+    assert composer.source_pages_model.data(source_index, background_role) == QColor("#45ef07")
 
     composer.composed_pages_view.selectRow(0)
     composer.preview_composed_page_changed(0)
     composer.remove_selected_pages()
-    assert composer.source_pages_model.data(source_index, background_role) == QColor("#d9ead3")
+    assert composer.source_pages_model.data(source_index, background_role) == QColor("#45ef07")
 
     composer.composed_pages_view.selectRow(0)
     composer.preview_composed_page_changed(0)
     composer.remove_selected_pages()
     assert composer.source_pages_model.data(source_index, background_role) == QColor("lightgrey")
+
+
+def test_source_preview_highlights_matching_result_page_while_source_list_has_focus(composer, qapp):
+    composer.add_source_page(0)
+    composer.add_source_page(1)
+    composer.show()
+    composer.source_pages_view.setFocus()
+    composer.source_pages_view.set_page(1)
+    qapp.processEvents()
+
+    background_role = Qt.ItemDataRole.BackgroundRole
+    assert composer.composed_pages_model.data(composer.composed_pages_model.index(0, 0), background_role) == QColor(
+        "lightgrey"
+    )
+    assert composer.composed_pages_model.data(composer.composed_pages_model.index(1, 0), background_role) == QColor(
+        "#45ef07"
+    )
+
+    composer.composed_pages_view.setFocus()
+    qapp.processEvents()
+    assert composer.composed_pages_model.previewed_rows == set()
 
 
 def test_add_rotate_remove_and_save_result(composer, tmp_path):
